@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -u
+
+scheme_dir="$HOME/.local/state/caelestia"
+config_dir="$HOME/.config/caelestia"
+sync_cmd="$HOME/.local/bin/clipse-theme-sync"
+
+"$sync_cmd" --refresh-running >/tmp/clipse-theme-sync.log 2>&1 || true
+
+while true; do
+    if command -v inotifywait >/dev/null 2>&1; then
+        inotifywait -q \
+            -e close_write,create,moved_to,delete \
+            "$scheme_dir" "$config_dir" >/tmp/clipse-theme-watch.event 2>/tmp/clipse-theme-watch.err || {
+                sleep 2
+                continue
+            }
+    else
+        sleep 3
+    fi
+
+    "$sync_cmd" --refresh-running >>/tmp/clipse-theme-sync.log 2>&1 || true
+done

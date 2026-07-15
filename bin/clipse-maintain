@@ -1,0 +1,157 @@
+#!/usr/bin/env bash
+set -u
+
+python - "$@" <<'PY'
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+parser = argparse.ArgumentParser(
+    description="Safely clean Clipse runtime files without touching history text."
+)
+parser.add_argument(
+    "--dry-run",
+    action="store_true",
+    help="show what would be done without changing files",
+)
+parser.add_argument(
+    "--clipse-dir",
+    default=os.environ.get("CLIPSE_DIR", str(Path.home() / ".config" / "clipse")),
+    help="Clipse config directory",
+)
+args = parser.parse_args(sys.argv[1:])
+
+clipse_dir = Path(args.clipse_dir).expanduser()
+history_path = clipse_dir / "clipboard_history.json"
+tmp_dir = clipse_dir / "tmp_files"
+now = time.time()
+min_age_seconds = 24 * 60 * 60
+
+
+def print_line(message):
+    print(message, flush=True)
+
+
+def load_history(path):
+    if not path.exists():
+        return []
+
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except Exception as exc:
+        raise SystemExit(f"ERROR: cannot read {path}: {exc}")
+
+    if isinstance(data, dict):
+        items = data.get("clipboardHistory", [])
+    elif isinstance(data, list):
+        items = data
+    else:
+        items = []
+
+    return items if isinstance(items, list) else []
+
+
+def resolve_reference(raw_path):
+    if not raw_path or raw_path == "null":
+        return None
+
+    candidate = Path(str(raw_path)).expanduser()
+    if not candidate.is_absolute():
+        candidate = clipse_dir / candidate
+
+    return candidate.resolve(strict=False)
+
+
+if args.dry_run:
+    print_line("DRY-RUN: would run: clipse -clean")
+else:
+    if shutil.which("clipse"):
+        result = subprocess.run(
+            ["clipse", "-clean"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if result.returncode != 0:
+            sys.stderr.write("WARNING: clipse -clean failed\n")
+            if result.stderr:
+                sys.stderr.write(result.stderr)
+    else:
+        sys.stderr.write("WARNING: clipse command not found; skipped clipse -clean\n")
+
+items = load_history(history_path)
+referenced_files = set()
+pinned_files = set()
+
+for item in items:
+    if not isinstance(item, dict):
+        continue
+
+    reference = resolve_reference(item.get("filePath"))
+    if reference is None:
+        continue
+
+    referenced_files.add(reference)
+    if item.get("pinned") is True:
+        pinned_files.add(reference)
+
+if not tmp_dir.exists():
+    print_line(f"OK: tmp dir does not exist: {tmp_dir}")
+    raise SystemExit(0)
+
+removed = 0
+eligible = 0
+skipped_referenced = 0
+skipped_recent = 0
+
+for path in sorted(tmp_dir.rglob("*")):
+    if not path.is_file():
+        continue
+
+    resolved = path.resolve(strict=False)
+    if resolved in referenced_files or resolved in pinned_files:
+        skipped_referenced += 1
+        continue
+
+    try:
+        age_seconds = now - path.stat().st_mtime
+    except FileNotFoundError:
+        continue
+
+    if age_seconds < min_age_seconds:
+        skipped_recent += 1
+        continue
+
+    eligible += 1
+    if args.dry_run:
+        print_line(f"DRY-RUN: would remove: {path}")
+        continue
+
+    try:
+        path.unlink()
+        removed += 1
+        print_line(f"removed: {path}")
+    except OSError as exc:
+        sys.stderr.write(f"WARNING: could not remove {path}: {exc}\n")
+
+if args.dry_run:
+    print_line(
+        "Summary: "
+        f"{eligible} old unreferenced file(s), "
+        f"{skipped_referenced} referenced/pinned skipped, "
+        f"{skipped_recent} recent skipped"
+    )
+else:
+    print_line(
+        "Summary: "
+        f"{removed} removed, "
+        f"{skipped_referenced} referenced/pinned skipped, "
+        f"{skipped_recent} recent skipped"
+    )
+PY

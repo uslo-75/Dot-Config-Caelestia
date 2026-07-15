@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -u
+
+force=0
+nokill=0
+
+for arg in "$@"; do
+    case "$arg" in
+        --force) force=1 ;;
+        --no-kill) nokill=1 ;;
+    esac
+done
+
+apply_lock="${XDG_RUNTIME_DIR:-/tmp}/caelestia-waypaper-apply.lock"
+open_lock="${XDG_RUNTIME_DIR:-/tmp}/waypaper-open.lock"
+
+# Si un changement est en cours, ne pas ouvrir Waypaper.
+if [[ "$force" = "0" ]]; then
+    (
+        flock -n 8 || exit 42
+    ) 8>"$apply_lock" || exit 0
+fi
+
+(
+    flock -w 1 9 || exit 0
+
+    if [[ "$nokill" = "0" ]]; then
+        if pgrep -x waypaper >/dev/null 2>&1; then
+            pkill -x waypaper >/dev/null 2>&1 || true
+            exit 0
+        fi
+    fi
+
+    WAYPAPER_UI=1 setsid -f waypaper >/tmp/waypaper.log 2>&1 9>&-
+) 9>"$open_lock"

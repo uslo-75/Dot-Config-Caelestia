@@ -1,0 +1,42 @@
+{
+  "appearance": {
+    "anim": { "durations": { "scale": 0.85 } },
+    "padding": { "scale": 1 },
+    "rounding": { "scale": 1.05 },
+    "spacing": { "scale": 1 },
+    "transparency": { "base": 0.92, "enabled": true, "layers": 0.55 }
+  },
+  "background": { "enabled": true, "wallpaperEnabled": false },
+  "bar": {
+    "activeWindow": { "compact": true, "inverted": false, "showOnHover": true },
+    "clock": { "background": false, "showDate": false, "showIcon": true },
+    "persistent": true,
+    "popouts": { "tray": true },
+    "scrollActions": { "brightness": true },
+    "status": { "showAudio": false, "showKbLayout": false, "showMicrophone": false },
+    "tray": { "background": false, "compact": false, "hiddenIcons": [], "recolour": false },
+    "workspaces": {
+      "activeIndicator": true,
+      "activeTrail": false,
+      "maxWindowIcons": 6,
+      "occupiedBg": false,
+      "perMonitorWorkspaces": true,
+      "showWindows": false,
+      "showWindowsOnSpecialWorkspaces": true,
+      "shown": 8
+    }
+  },
+  "dashboard": { "enabled": true, "showDashboard": true, "showOnHover": true },
+  "general": { "apps": { "explorer": ["thunar"], "terminal": ["kitty"] } },
+  "launcher": {
+    "enabled": true,
+    "favouriteApps": ["com.github.th-ch.youtube-music.desktop"],
+    "maxShown": 7,
+    "showOnHover": false,
+    "useFuzzy": { "apps": true, "wallpapers": true },
+    "vimKeybinds": false
+  },
+  "paths": { "wallpaperDir": "~/Images/wallpapers" },
+  "services": { "defaultPlayer": "YouTube Music", "gpuType": "", "smartScheme": false },
+  "sidebar": { "dragThreshold": 80, "enabled": true }
+}

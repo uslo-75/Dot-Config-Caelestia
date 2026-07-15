@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+set -u
+
+thumbs_cmd="$HOME/.local/bin/caelestia-wallpaper-thumbs"
+log="/tmp/caelestia-wallpaper-thumbs-watch.log"
+
+wallpaper_dir() {
+    local dir
+    dir="$(
+        jq -r '.paths.wallpaperDir // empty' "$HOME/.config/caelestia/shell.json" 2>/dev/null || true
+    )"
+
+    if [[ -z "$dir" ]]; then
+        dir="$HOME/Images/wallpapers"
+    fi
+
+    printf '%s\n' "${dir/#\~/$HOME}"
+}
+
+generate_thumbs() {
+    local dir="$1"
+    [[ -x "$thumbs_cmd" ]] || return 0
+    "$thumbs_cmd" "$dir" >>"$log" 2>&1 || true
+}
+
+while true; do
+    dir="$(wallpaper_dir)"
+    mkdir -p "$dir" "$HOME/.cache/caelestia/wallpaper-thumbs"
+
+    generate_thumbs "$dir"
+
+    if command -v inotifywait >/dev/null 2>&1; then
+        inotifywait -q -r \
+            -e close_write,moved_to,moved_from,create,delete,delete_self,move_self \
+            "$dir" >/dev/null 2>>"$log" || {
+                sleep 2
+                continue
+            }
+        sleep 0.6
+    else
+        sleep 60
+    fi
+done

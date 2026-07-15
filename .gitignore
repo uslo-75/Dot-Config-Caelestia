@@ -1,0 +1,6 @@
+dist/
+*.tar.zst
+*.tar.zst.sha256.tmp
+.install-test/
+__pycache__/
+*.pyc

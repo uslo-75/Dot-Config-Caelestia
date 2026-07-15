@@ -1,0 +1,72 @@
+#!/usr/bin/python
+import logging
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+
+def _sync_theme():
+    sync_cmd = str(Path.home() / ".local/bin/clipse-theme-sync")
+    try:
+        gtk_theme = subprocess.check_output(
+            [sync_cmd, "--gtk-theme"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+        if gtk_theme:
+            os.environ["GTK_THEME"] = gtk_theme
+    except Exception:
+        pass
+
+
+_sync_theme()
+
+import gi
+
+gi.require_version("Gtk", "3.0")
+from gi.repository import Gtk
+
+from clipse_gui.controller_mixins import list_view_mixin
+
+
+log = logging.getLogger(__name__)
+
+
+def _update_row_image_widget(self, image_container, placeholder, pixbuf, error_message):
+    if not image_container:
+        return False
+
+    try:
+        current_child = image_container.get_child()
+        if current_child:
+            image_container.remove(current_child)
+
+        if pixbuf:
+            image = Gtk.Image.new_from_pixbuf(pixbuf)
+            image.set_halign(Gtk.Align.CENTER)
+            image.set_valign(Gtk.Align.CENTER)
+            image_container.add(image)
+            image.show()
+        else:
+            label = placeholder or Gtk.Label()
+            label.set_label(error_message or "[Load Error]")
+            label.set_halign(Gtk.Align.CENTER)
+            label.set_valign(Gtk.Align.CENTER)
+            image_container.add(label)
+            label.show()
+
+        image_container.show_all()
+    except Exception as exc:
+        log.debug("Image row update skipped, widget may be gone: %s", exc)
+
+    return False
+
+
+list_view_mixin.ListViewMixin._update_row_image_widget = _update_row_image_widget
+
+from clipse_gui.cli import main  # noqa: E402
+
+
+if __name__ == "__main__":
+    sys.exit(main())

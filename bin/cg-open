@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+set -u
+
+text_listener_pattern='[w]l-paste --type text --watch .*/clipse --wl-store'
+image_listener_pattern='[w]l-paste --type image/png --watch .*/clipse --wl-store'
+any_listener_pattern='[w]l-paste .*--watch .*/clipse --wl-store'
+gui_pattern="(/usr/bin/clipse-gui|${HOME}/.local/bin/clipse-gui-fixed)( |$)"
+gui_cmd="$HOME/.local/bin/clipse-gui-fixed"
+lock="${XDG_RUNTIME_DIR:-/tmp}/cg-open.lock"
+
+listener_ok() {
+    pgrep -f "$text_listener_pattern" >/dev/null 2>&1 \
+        && pgrep -f "$image_listener_pattern" >/dev/null 2>&1
+}
+
+ensure_listener() {
+    if listener_ok; then
+        return 0
+    fi
+
+    pkill -f "$any_listener_pattern" >/dev/null 2>&1 || true
+    clipse -listen >/tmp/clipse.log 2>&1 9>&- &
+    sleep 0.15
+}
+
+case "${1:-}" in
+    --ensure-listener)
+        ensure_listener
+        exit 0
+        ;;
+    --status)
+        if listener_ok; then
+            listener_state=ok
+        else
+            listener_state=missing
+        fi
+
+        if pgrep -f "$gui_pattern" >/dev/null 2>&1; then
+            gui_state=running
+        else
+            gui_state=stopped
+        fi
+
+        printf 'listener=%s\ngui=%s\n' "$listener_state" "$gui_state"
+        exit 0
+        ;;
+esac
+
+launch_gui() {
+    if [ -x "$HOME/.local/bin/clipse-theme-sync" ]; then
+        gtk_theme="$("$HOME/.local/bin/clipse-theme-sync" --gtk-theme 2>/dev/null || true)"
+        if [ -n "${gtk_theme:-}" ]; then
+            export GTK_THEME="$gtk_theme"
+        fi
+    fi
+
+    if [ -x "$gui_cmd" ]; then
+        "$gui_cmd" >/tmp/clipse-gui.log 2>&1 9>&- &
+    else
+        clipse-gui >/tmp/clipse-gui.log 2>&1 9>&- &
+    fi
+}
+
+(
+    flock -w 1 9 || exit 0
+
+    if ! listener_ok; then
+        ensure_listener
+        if command -v notify-send >/dev/null 2>&1; then
+            notify-send -a Clipse -t 1400 "Clipse" "Listener restarted" >/dev/null 2>&1 || true
+        fi
+    fi
+
+    if pgrep -f "$gui_pattern" >/dev/null 2>&1; then
+        if hyprctl clients 2>/dev/null | rg -iq 'class: .*clipse|title: .*Clipse'; then
+            pkill -f "$gui_pattern" >/dev/null 2>&1 || true
+        else
+            pkill -f "$gui_pattern" >/dev/null 2>&1 || true
+            sleep 0.08
+            launch_gui
+        fi
+    else
+        launch_gui
+    fi
+) 9>"$lock"

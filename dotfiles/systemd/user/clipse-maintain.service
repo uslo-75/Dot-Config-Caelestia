@@ -1,0 +1,8 @@
+[Unit]
+Description=Safely maintain Clipse clipboard cache
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/clipse-maintain
+Nice=10
+IOSchedulingClass=idle

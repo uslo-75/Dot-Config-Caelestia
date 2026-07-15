@@ -1,0 +1,6 @@
+# Automatic login does not store or bypass the user's account password.
+# The password remains required by the Caelestia lock screen.
+[Autologin]
+User=__USER__
+Session=hyprland
+Relogin=false

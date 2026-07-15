@@ -1,0 +1,12 @@
+[Unit]
+Description=Generate Caelestia wallpaper thumbnails when files change
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+ExecStart=%h/.local/bin/caelestia-wallpaper-thumbs-watch
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

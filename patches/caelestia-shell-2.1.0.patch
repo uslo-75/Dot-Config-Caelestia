@@ -1,0 +1,681 @@
+--- a/modules/Shortcuts.qml
++++ b/modules/Shortcuts.qml
+@@ -2,6 +2,7 @@
+ import Quickshell
+ import Quickshell.Io
+ import Caelestia
++import Caelestia.Config
+ import qs.components.misc
+ import qs.services
+ import qs.modules.nexus
+@@ -109,6 +110,31 @@
+     }
+
+     IpcHandler {
++        function openWithText(text: string): void {
++            if (root.hasFullscreen)
++                return;
++
++            LauncherState.openSearch(text);
++
++            const visibilities = Visibilities.getForActive();
++            if (visibilities)
++                visibilities.launcher = true;
++        }
++
++        function openWallpapers(): void {
++            openWithText(`${GlobalConfig.launcher.actionPrefix}wallpaper `);
++        }
++
++        function close(): void {
++            const visibilities = Visibilities.getForActive();
++            if (visibilities)
++                visibilities.launcher = false;
++        }
++
++        target: "launcher"
++    }
++
++    IpcHandler {
+         function toggle(drawer: string): void {
+             if (list().split("\n").includes(drawer)) {
+                 if (root.hasFullscreen && ["launcher", "session", "dashboard"].includes(drawer))
+--- a/modules/background/Background.qml
++++ b/modules/background/Background.qml
+@@ -15,12 +15,13 @@
+         id: win
+
+         required property ShellScreen modelData
++        readonly property bool wallpaperLayerActive: contentItem.Config.background.wallpaperEnabled || Wallpapers.transitionActive
+
+         screen: modelData
+         name: "background"
+         WlrLayershell.exclusionMode: ExclusionMode.Ignore
+-        WlrLayershell.layer: contentItem.Config.background.wallpaperEnabled ? WlrLayer.Background : WlrLayer.Bottom
+-        color: contentItem.Config.background.wallpaperEnabled ? "black" : "transparent"
++        WlrLayershell.layer: wallpaperLayerActive ? WlrLayer.Background : WlrLayer.Bottom
++        color: "transparent"
+         surfaceFormat.opaque: false
+
+         anchors.top: true
+@@ -39,7 +40,7 @@
+                 asynchronous: true
+
+                 anchors.fill: parent
+-                active: Config.background.wallpaperEnabled
++                active: Config.background.wallpaperEnabled || Wallpapers.transitionActive
+
+                 sourceComponent: Wallpaper {}
+             }
+--- a/modules/background/Wallpaper.qml
++++ b/modules/background/Wallpaper.qml
+@@ -1,6 +1,7 @@
+ pragma ComponentBehavior: Bound
+
+ import QtQuick
++import QtQuick.Effects
+ import Caelestia.Config
+ import qs.components
+ import qs.components.filedialog
+@@ -14,6 +15,7 @@
+     property string source: Wallpapers.current
+     property CachingImage current
+     property bool completed
++    readonly property bool showingAnimatedTransitionFrame: Wallpapers.transitionActive && !Wallpapers.showPreview
+
+     onSourceChanged: {
+         if (!source)
+@@ -108,27 +110,51 @@
+
+             anchors.fill: parent
+
+-            opacity: 0
+-
+-            onStatusChanged: {
+-                if (status === Image.Ready)
+-                    anim.start();
++            opacity: status === Image.Ready ? 1 : 0
++            scale: root.showingAnimatedTransitionFrame ? 1.03 : 1
++            layer.enabled: root.showingAnimatedTransitionFrame && status === Image.Ready
++            layer.effect: MultiEffect {
++                blurEnabled: true
++                blur: 0.65
++                blurMax: 32
++                autoPaddingEnabled: false
+             }
+
+-            Anim on opacity {
+-                id: anim
++            Behavior on opacity {
++                NumberAnimation {
++                    duration: 160
++                    easing.type: Easing.OutCubic
++                }
++            }
+
+-                type: Anim.SlowEffects
+-                running: false
+-                from: 0
+-                to: 1
++            Behavior on scale {
++                NumberAnimation {
++                    duration: 160
++                    easing.type: Easing.OutCubic
++                }
+             }
+
+             Timer {
+                 running: root.current !== img && root.current?.status === Image.Ready
+-                interval: anim.duration
++                interval: 180
+                 onTriggered: img.destroy()
+             }
+         }
+     }
++
++    Rectangle {
++        anchors.fill: parent
++
++        z: 10
++        color: "black"
++        opacity: root.showingAnimatedTransitionFrame ? 0.1 : 0
++        visible: opacity > 0
++
++        Behavior on opacity {
++            NumberAnimation {
++                duration: 160
++                easing.type: Easing.OutCubic
++            }
++        }
++    }
+ }
+--- a/modules/bar/components/Tray.qml
++++ b/modules/bar/components/Tray.qml
+@@ -18,6 +18,23 @@
+     readonly property int spacing: Config.bar.tray.background ? Tokens.spacing.small : 0
+
+     property bool expanded
++    readonly property list<var> visibleTrayItems: SystemTray.items.values.filter(i => !GlobalConfig.bar.tray.hiddenIcons.includes(i.id))
++
++    function trayEndWeight(item) {
++        const id = String(item?.id ?? "").toLowerCase();
++        if (id.includes("pin"))
++            return 2;
++        if (id.includes("protonmail"))
++            return 1;
++        return 0;
++    }
++
++    function orderedTrayItems(items) {
++        return items
++            .map((item, index) => ({ item, index }))
++            .sort((a, b) => (trayEndWeight(a.item) - trayEndWeight(b.item)) || (a.index - b.index))
++            .map(entry => entry.item);
++    }
+
+     readonly property real nonAnimHeight: {
+         if (!Config.bar.tray.compact)
+@@ -68,7 +85,7 @@
+             id: items
+
+             model: ScriptModel {
+-                values: SystemTray.items.values.filter(i => !GlobalConfig.bar.tray.hiddenIcons.includes(i.id))
++                values: root.orderedTrayItems(root.visibleTrayItems)
+             }
+
+             TrayItem {}
+--- a/modules/bar/popouts/Content.qml
++++ b/modules/bar/popouts/Content.qml
+@@ -13,6 +13,23 @@
+     required property PopoutState popouts
+     readonly property Popout currentPopout: content.children.find(c => c.shouldBeActive) ?? null
+     readonly property Item current: currentPopout?.item ?? null
++    readonly property list<var> visibleTrayItems: SystemTray.items.values.filter(i => !GlobalConfig.bar.tray.hiddenIcons.includes(i.id))
++
++    function trayEndWeight(item) {
++        const id = String(item?.id ?? "").toLowerCase();
++        if (id.includes("pin"))
++            return 2;
++        if (id.includes("protonmail"))
++            return 1;
++        return 0;
++    }
++
++    function orderedTrayItems(items) {
++        return items
++            .map((item, index) => ({ item, index }))
++            .sort((a, b) => (trayEndWeight(a.item) - trayEndWeight(b.item)) || (a.index - b.index))
++            .map(entry => entry.item);
++    }
+
+     implicitWidth: (currentPopout?.implicitWidth ?? 0) + Tokens.padding.extraLargeIncreased
+     implicitHeight: (currentPopout?.implicitHeight ?? 0) + Tokens.padding.extraLargeIncreased
+@@ -128,7 +145,7 @@
+
+         Repeater {
+             model: ScriptModel {
+-                values: SystemTray.items.values.filter(i => !GlobalConfig.bar.tray.hiddenIcons.includes(i.id))
++                values: root.orderedTrayItems(root.visibleTrayItems)
+             }
+
+             Popout {
+--- a/modules/drawers/ContentWindow.qml
++++ b/modules/drawers/ContentWindow.qml
+@@ -20,15 +20,15 @@
+     readonly property alias interactionWrapper: interactions
+
+     readonly property HyprlandMonitor monitor: Hypr.monitorFor(screen)
+-    readonly property bool hasSpecialWorkspace: (monitor?.lastIpcObject.specialWorkspace?.name.length ?? 0) > 0
+-    readonly property bool hasFullscreenOnNormalWs: monitor?.activeWorkspace?.toplevels.values.some(t => t.lastIpcObject.fullscreen > 1) ?? false
++    readonly property bool hasSpecialWorkspace: (monitor?.lastIpcObject?.specialWorkspace?.name.length ?? 0) > 0
++    readonly property bool hasFullscreenOnNormalWs: monitor?.activeWorkspace?.toplevels.values.some(t => (t.lastIpcObject?.fullscreen ?? 0) > 1) ?? false
+     readonly property bool hasFullscreen: {
+         if (hasSpecialWorkspace) {
+-            const specialName = monitor?.lastIpcObject.specialWorkspace?.name;
++            const specialName = monitor?.lastIpcObject?.specialWorkspace?.name;
+             if (!specialName)
+                 return false;
+             const specialWs = Hypr.workspaces.values.find(ws => ws.name === specialName);
+-            return specialWs?.toplevels.values.some(t => t.lastIpcObject.fullscreen > 1) ?? false;
++            return specialWs?.toplevels.values.some(t => (t.lastIpcObject?.fullscreen ?? 0) > 1) ?? false;
+         }
+         return hasFullscreenOnNormalWs;
+     }
+@@ -46,7 +46,7 @@
+         if (focusGrab.active || panels.popouts.isDetached)
+             return 0;
+
+-        if (monitor?.lastIpcObject.specialWorkspace?.name || monitor?.activeWorkspace.lastIpcObject.windows > 0)
++        if (monitor?.lastIpcObject?.specialWorkspace?.name || (monitor?.activeWorkspace?.lastIpcObject?.windows ?? 0) > 0)
+             return 0;
+
+         const thresholds = [];
+--- a/modules/launcher/Content.qml
++++ b/modules/launcher/Content.qml
+@@ -18,6 +18,13 @@
+     readonly property int padding: Tokens.padding.large
+     readonly property int rounding: Tokens.rounding.extraLarge
+
++    function applyLauncherRequest(): void {
++        if (LauncherState.searchText) {
++            search.text = LauncherState.searchText;
++            search.forceActiveFocus();
++        }
++    }
++
+     implicitWidth: listWrapper.width + padding * 2
+     implicitHeight: searchWrapper.height + listWrapper.height + padding + searchWrapper.anchors.bottomMargin
+
+@@ -128,12 +135,19 @@
+                 }
+             }
+
+-            Component.onCompleted: forceActiveFocus()
++            Component.onCompleted: {
++                root.applyLauncherRequest();
++                forceActiveFocus();
++            }
+
+             Connections {
+                 function onLauncherChanged(): void {
+-                    if (!root.visibilities.launcher)
++                    if (!root.visibilities.launcher) {
+                         search.text = "";
++                        LauncherState.clear();
++                    } else {
++                        root.applyLauncherRequest();
++                    }
+                 }
+
+                 function onSessionChanged(): void {
+@@ -143,6 +157,14 @@
+
+                 target: root.visibilities
+             }
++
++            Connections {
++                function onRequestSerialChanged(): void {
++                    root.applyLauncherRequest();
++                }
++
++                target: LauncherState
++            }
+         }
+
+         MaterialIcon {
+--- a/modules/launcher/items/WallpaperItem.qml
++++ b/modules/launcher/items/WallpaperItem.qml
+@@ -12,6 +12,7 @@
+
+     required property FileSystemEntry modelData
+     required property DrawerVisibilities visibilities
++    readonly property bool animated: Wallpapers.isAnimated(modelData.path)
+
+     scale: 0.5
+     opacity: 0
+@@ -66,13 +67,34 @@
+
+         CachingImage {
+             anchors.fill: parent
+-            path: root.modelData.path
++            path: Wallpapers.previewSource(root.modelData.path)
+             smooth: !root.PathView.view.moving
+             sourceSize: {
+                 const dpr = (QsWindow.window as QsWindow)?.devicePixelRatio ?? 1;
+                 return Qt.size(image.implicitWidth * dpr, image.implicitHeight * dpr);
+             }
+         }
++
++        StyledRect {
++            anchors.right: parent.right
++            anchors.bottom: parent.bottom
++            anchors.margins: Tokens.padding.small
++
++            implicitWidth: playIcon.implicitWidth + Tokens.padding.small * 2
++            implicitHeight: playIcon.implicitHeight + Tokens.padding.small * 2
++            radius: Tokens.rounding.full
++            color: Colours.palette.m3primaryContainer
++            opacity: root.animated ? 0.92 : 0
++
++            MaterialIcon {
++                id: playIcon
++
++                anchors.centerIn: parent
++                text: "play_arrow"
++                color: Colours.palette.m3onPrimaryContainer
++                fontStyle: Tokens.font.icon.small
++            }
++        }
+     }
+
+     StyledText {
+--- a/modules/nexus/common/WallItem.qml
++++ b/modules/nexus/common/WallItem.qml
+@@ -16,6 +16,7 @@
+     property alias radius: imgWrapper.radius
+     property alias imgHeight: imgWrapper.implicitHeight
+     property bool fillLabel: true
++    property bool animated: false
+
+     signal clicked
+
+@@ -84,6 +85,27 @@
+                     }
+                 }
+             }
++
++            StyledRect {
++                anchors.right: parent.right
++                anchors.bottom: parent.bottom
++                anchors.margins: Tokens.padding.small
++
++                implicitWidth: playIcon.implicitWidth + Tokens.padding.small * 2
++                implicitHeight: playIcon.implicitHeight + Tokens.padding.small * 2
++                radius: Tokens.rounding.full
++                color: Colours.palette.m3primaryContainer
++                opacity: root.animated ? 0.92 : 0
++
++                MaterialIcon {
++                    id: playIcon
++
++                    anchors.centerIn: parent
++                    text: "play_arrow"
++                    color: Colours.palette.m3onPrimaryContainer
++                    fontStyle: Tokens.font.icon.small
++                }
++            }
+         }
+
+         StyledText {
+--- a/modules/nexus/pages/wallandstyle/WallpaperCategory.qml
++++ b/modules/nexus/pages/wallandstyle/WallpaperCategory.qml
+@@ -40,7 +40,8 @@
+                 opacity: modelData ? 1 : 0
+                 enabled: modelData
+
+-                source: String(modelData?.path ?? "")
++                source: modelData ? Wallpapers.previewSource(modelData.path) : ""
++                animated: modelData ? Wallpapers.isAnimated(modelData.path) : false
+                 text: modelData?.name ?? ""
+                 onClicked: {
+                     Wallpapers.setWallpaper(modelData.path);
+--- a/modules/nexus/pages/wallandstyle/WallpaperSelect.qml
++++ b/modules/nexus/pages/wallandstyle/WallpaperSelect.qml
+@@ -126,7 +126,8 @@
+                     opacity: modelData ? 1 : 0
+                     enabled: modelData
+
+-                    source: String(modelData?.path ?? "")
++                    source: modelData ? Wallpapers.previewSource(modelData.path) : ""
++                    animated: modelData ? Wallpapers.isAnimated(modelData.path) : false
+                     text: {
+                         if (!modelData)
+                             return "";
+--- a/services/Colours.qml
++++ b/services/Colours.qml
+@@ -60,8 +60,20 @@
+     }
+
+     function load(data: string, isPreview: bool): void {
++        const raw = data.trim();
++        if (!raw)
++            return;
++
+         const colours = isPreview ? preview : current;
+-        const scheme = JSON.parse(data);
++        let scheme;
++        try {
++            scheme = JSON.parse(raw);
++        } catch (e) {
++            return;
++        }
++
++        if (!scheme?.colours)
++            return;
+
+         if (!isPreview) {
+             root.scheme = scheme.name;
+@@ -123,7 +135,7 @@
+     ImageAnalyser {
+         id: analyser
+
+-        source: Wallpapers.current
++        source: Wallpapers.previewSource(Wallpapers.current)
+     }
+
+     Timer {
+--- a/services/Wallpapers.qml
++++ b/services/Wallpapers.qml
+@@ -12,15 +12,84 @@
+     id: root
+
+     readonly property string currentNamePath: `${Paths.state}/wallpaper/path.txt`
++    readonly property string waypaperCurrentNamePath: `${Paths.config}/waypaper-current`
++    readonly property string thumbDir: `${Paths.cache}/wallpaper-thumbs`
++    readonly property string transitionFrameDir: `${Paths.cache}/wallpaper-transition-frames`
+     readonly property list<string> smartArg: GlobalConfig.services.smartScheme ? [] : ["--no-smart"]
+     readonly property string fallback: Quickshell.shellPath("assets/wallpaper.webp")
++    readonly property list<string> animatedExtensions: [".mp4", ".webm", ".mkv", ".mov", ".avi", ".m4v", ".gif"]
++    readonly property list<string> wallpaperNameFilters: [
++        "*.jpg", "*.jpeg", "*.png", "*.webp", "*.bmp", "*.gif",
++        "*.JPG", "*.JPEG", "*.PNG", "*.WEBP", "*.BMP", "*.GIF",
++        "*.mp4", "*.webm", "*.mkv", "*.mov", "*.avi", "*.m4v",
++        "*.MP4", "*.WEBM", "*.MKV", "*.MOV", "*.AVI", "*.M4V"
++    ]
+
+     property bool showPreview: false
+-    readonly property string current: showPreview ? previewPath : actualCurrent
++    readonly property string current: showPreview ? previewPath : transitionActive ? transitionSource() : displaySource(actualCurrent)
+     property string previewPath
+     property string actualCurrent
++    property string caelestiaCurrent
++    property string waypaperCurrent
++    property bool transitionActive
++    property string transitionWallpaper
++    property string transitionFrame
+     property bool previewColourLock
+     property bool pendingPreviewClear
++    property int previewRequestId
++
++    function extension(path: string): string {
++        const dot = path.lastIndexOf(".");
++        return dot >= 0 ? path.slice(dot).toLowerCase() : "";
++    }
++
++    function isAnimated(path: string): bool {
++        return animatedExtensions.includes(extension(path));
++    }
++
++    function previewSource(path: string): string {
++        if (!path)
++            return "";
++        if (isAnimated(path))
++            return `${thumbDir}/${encodeURIComponent(path)}.jpg`;
++        return path;
++    }
++
++    function displaySource(path: string): string {
++        return isAnimated(path) ? previewSource(path) : path;
++    }
++
++    function transitionSource(): string {
++        if (transitionFrame)
++            return transitionFrame;
++        if (transitionWallpaper)
++            return previewSource(transitionWallpaper);
++        return displaySource(actualCurrent);
++    }
++
++    function refreshActualCurrent(): void {
++        actualCurrent = waypaperCurrent || caelestiaCurrent || fallback;
++    }
++
++    function refreshAnimatedThumbs(): void {
++        Quickshell.execDetached([`${Paths.home}/.local/bin/caelestia-wallpaper-thumbs`, Paths.wallsdir]);
++    }
++
++    function uniqueEntries(entries: var): list<var> {
++        const seen = {};
++        const unique = [];
++
++        for (const entry of entries) {
++            const path = entry?.path ?? "";
++            if (!path || seen[path])
++                continue;
++
++            seen[path] = true;
++            unique.push(entry);
++        }
++
++        return unique;
++    }
+
+     function getCategoryFor(w: FileSystemEntry): string {
+         let category = w.parentDir.slice(Paths.wallsdir.length + 1);
+@@ -34,32 +103,44 @@
+     }
+
+     function setWallpaper(path: string): void {
++        if (!path || path === actualCurrent)
++            return;
++
+         actualCurrent = path;
+-        Quickshell.execDetached(["caelestia", "wallpaper", "-f", path, ...smartArg]);
++        Quickshell.execDetached([`${Paths.home}/.local/bin/caelestia-wallpaper-set`, path]);
+     }
+
+     function preview(path: string): void {
+-        previewPath = path;
++        previewPath = previewSource(path);
+         showPreview = true;
+
+-        if (Colours.scheme === "dynamic")
++        if (Colours.scheme === "dynamic" && previewPath) {
++            previewColourLock = true;
++            pendingPreviewClear = false;
++            getPreviewColoursProc.running = false;
++            getPreviewColoursProc.requestId = ++previewRequestId;
++            getPreviewColoursProc.requestPath = previewPath;
+             getPreviewColoursProc.running = true;
++        }
+     }
+
+     function stopPreview(): void {
+         showPreview = false;
+-        if (previewColourLock)
+-            pendingPreviewClear = true;
+-        else
+-            Colours.showPreview = false;
++        ++previewRequestId;
++        getPreviewColoursProc.running = false;
++        pendingPreviewClear = false;
++        previewColourLock = false;
++        Colours.showPreview = false;
+     }
+
+     onPreviewColourLockChanged: {
+-        if (!previewColourLock && pendingPreviewClear)
++        if (!previewColourLock && pendingPreviewClear) {
++            pendingPreviewClear = false;
+             Colours.showPreview = false;
++        }
+     }
+
+-    list: wallpapers.entries
++    list: uniqueEntries(wallpapers.entries)
+     key: "relativePath"
+     useFuzzy: GlobalConfig.launcher.useFuzzy.wallpapers
+     extraOpts: useFuzzy ? ({}) : ({
+@@ -79,6 +160,25 @@
+             return root.list.map(w => w.path).join("\n");
+         }
+
++        function transitionStart(wallpaper: string, frame: string): void {
++            if (!wallpaper)
++                return;
++
++            root.transitionWallpaper = wallpaper;
++            root.transitionFrame = frame || root.previewSource(wallpaper);
++            root.transitionActive = true;
++            root.actualCurrent = wallpaper;
++        }
++
++        function transitionStop(wallpaper: string): void {
++            if (wallpaper && root.transitionWallpaper && wallpaper !== root.transitionWallpaper)
++                return;
++
++            root.transitionActive = false;
++            root.transitionWallpaper = "";
++            root.transitionFrame = "";
++        }
++
+         target: "wallpaper"
+     }
+
+@@ -93,33 +193,62 @@
+                 wall = root.fallback;
+                 Quickshell.execDetached(["caelestia", "wallpaper", "-f", root.fallback, ...root.smartArg]);
+             }
+-            root.actualCurrent = wall;
++            root.caelestiaCurrent = wall;
++            root.refreshActualCurrent();
+             root.previewColourLock = false;
+         }
+         onLoadFailed: {
+-            root.actualCurrent = root.fallback;
++            root.caelestiaCurrent = root.fallback;
++            root.refreshActualCurrent();
+             root.previewColourLock = false;
+             Quickshell.execDetached(["caelestia", "wallpaper", "-f", root.fallback, ...root.smartArg]);
+         }
+     }
+
++    FileView {
++        path: root.waypaperCurrentNamePath
++        watchChanges: true
++        printErrors: false
++        onFileChanged: reload()
++        onLoaded: {
++            root.waypaperCurrent = text().trim();
++            root.refreshActualCurrent();
++            root.previewColourLock = false;
++        }
++        onLoadFailed: {
++            root.waypaperCurrent = "";
++            root.refreshActualCurrent();
++        }
++    }
++
+     FileSystemModel {
+         id: wallpapers
+
+         recursive: true
+         path: Paths.wallsdir
+-        filter: FileSystemModel.Images
++        nameFilters: root.wallpaperNameFilters
+     }
+
+     Process {
+         id: getPreviewColoursProc
+
+-        command: ["caelestia", "wallpaper", "-p", root.previewPath, ...root.smartArg]
++        property int requestId
++        property string requestPath
++
++        command: ["caelestia", "wallpaper", "-p", requestPath, ...root.smartArg]
+         stdout: StdioCollector {
+             onStreamFinished: {
++                if (getPreviewColoursProc.requestId !== root.previewRequestId || !root.showPreview || getPreviewColoursProc.requestPath !== root.previewPath) {
++                    root.previewColourLock = false;
++                    return;
++                }
++
+                 Colours.load(text, true);
+                 Colours.showPreview = true;
++                root.previewColourLock = false;
+             }
+         }
+     }
++
++    Component.onCompleted: refreshAnimatedThumbs()
+ }

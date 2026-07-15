@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+set -u
+
+strict=0
+[[ "${1:-}" == "--strict" ]] && strict=1
+failures=0
+
+section() {
+    printf '\n== %s ==\n' "$1"
+}
+
+section "GPU PCI"
+gpu_info="$(lspci -nnk -d 10de: 2>/dev/null || true)"
+printf '%s\n' "${gpu_info:-lspci indisponible}"
+
+if ! printf '%s\n' "$gpu_info" | rg -qi 'NVIDIA'; then
+    printf '\nAucun GPU NVIDIA détecté ; aucun réglage NVIDIA n’est nécessaire.\n'
+    exit 0
+fi
+
+section "Paquets et noyau"
+printf 'Noyau: %s\n' "$(uname -r)"
+pacman -Q 2>/dev/null | rg -i '^(linux|linux-lts|linux-zen|linux-hardened|nvidia[^ ]*|lib32-nvidia[^ ]*|libva-nvidia[^ ]*|egl-wayland[^ ]*|vulkan[^ ]*) ' || true
+
+section "Modules chargés"
+lsmod 2>/dev/null | rg '^nvidia' || {
+    printf 'ERREUR: modules NVIDIA non chargés.\n'
+    failures=$((failures + 1))
+}
+if [[ -r /proc/driver/nvidia/version ]]; then
+    cat /proc/driver/nvidia/version
+fi
+
+for parameter in modeset fbdev; do
+    path="/sys/module/nvidia_drm/parameters/$parameter"
+    if [[ -r "$path" ]]; then
+        value="$(cat "$path" 2>/dev/null || true)"
+        printf 'nvidia_drm.%s=%s\n' "$parameter" "${value:-inconnu}"
+        if [[ "$parameter" == modeset && "$value" != Y ]]; then
+            printf 'ERREUR: DRM modeset doit être Y pour Wayland.\n'
+            failures=$((failures + 1))
+        fi
+    fi
+done
+
+section "nvidia-smi"
+if command -v nvidia-smi >/dev/null 2>&1; then
+    if ! nvidia-smi; then
+        printf 'ERREUR: nvidia-smi ne communique pas avec le pilote. Redémarrer après une mise à jour du noyau/pilote puis relancer ce rapport.\n'
+        failures=$((failures + 1))
+    fi
+else
+    printf 'ERREUR: nvidia-smi absent (paquet nvidia-utils).\n'
+    failures=$((failures + 1))
+fi
+
+section "Rendu Hyprland"
+if command -v hyprctl >/dev/null 2>&1; then
+    hyprctl systeminfo 2>/dev/null | rg -i 'GPU|renderer|NVIDIA|version' || printf 'Session Hyprland non joignable.\n'
+fi
+
+section "Accélération vidéo et Vulkan"
+if command -v vainfo >/dev/null 2>&1; then
+    vainfo 2>&1 | rg -i 'driver version|VAProfile|error' | sed -n '1,35p' || true
+fi
+if command -v vulkaninfo >/dev/null 2>&1; then
+    vulkaninfo --summary 2>/dev/null | rg -i 'deviceName|driverName|driverInfo|apiVersion' || true
+fi
+
+section "Fonds d’écran animés"
+if pgrep -x mpvpaper >/dev/null 2>&1; then
+    ps -C mpvpaper -o pid,%cpu,%mem,rss,etime,args --no-headers || true
+    nvidia-smi pmon -c 1 2>/dev/null | sed -n '1,25p' || true
+else
+    printf 'mpvpaper n’est pas actif actuellement.\n'
+fi
+
+section "Résumé"
+if (( failures == 0 )); then
+    printf 'OK: aucune anomalie NVIDIA bloquante détectée.\n'
+else
+    printf 'ATTENTION: %d anomalie(s) détectée(s).\n' "$failures"
+fi
+
+if (( strict && failures > 0 )); then
+    exit 1
+fi

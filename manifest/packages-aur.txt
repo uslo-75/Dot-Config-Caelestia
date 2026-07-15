@@ -1,0 +1,4 @@
+clipse
+clipse-gui
+mpvpaper
+waypaper

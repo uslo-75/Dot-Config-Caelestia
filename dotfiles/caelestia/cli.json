@@ -1,0 +1,12 @@
+{
+  "theme": {
+    "enableTerm": true,
+    "enableHypr": true,
+    "enableGtk": true,
+    "enableQt": true,
+    "enableFuzzel": true,
+    "enableBtop": true,
+    "enableDiscord": true,
+    "enableChromium": false
+  }
+}
