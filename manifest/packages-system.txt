@@ -1,0 +1,8 @@
+grub
+lib32-nvidia-utils
+libva-nvidia-driver
+nvidia-settings
+nvidia-utils
+nvtop
+sddm
+ttf-dejavu

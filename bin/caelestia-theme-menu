@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+set -u
+
+mode_file="$HOME/.config/caelestia/theme-mode"
+variant_file="$HOME/.config/caelestia/theme-variant"
+current_file="$HOME/.config/caelestia/waypaper-current"
+override_file="$HOME/.config/caelestia/theme-override-wallpaper"
+
+current_mode="$(cat "$mode_file" 2>/dev/null || echo auto)"
+current_variant="$(cat "$variant_file" 2>/dev/null || echo auto)"
+changed=0
+
+write_if_changed() {
+    local file="$1"
+    local value="$2"
+    local current=""
+
+    [[ -f "$file" ]] && current="$(cat "$file" 2>/dev/null || true)"
+    if [[ "$current" != "$value" ]]; then
+        printf '%s\n' "$value" > "$file"
+        changed=1
+    fi
+}
+
+copy_if_changed() {
+    local src="$1"
+    local dst="$2"
+
+    [[ -f "$src" ]] || return 0
+    if ! cmp -s "$src" "$dst" 2>/dev/null; then
+        cp "$src" "$dst"
+        changed=1
+    fi
+}
+
+items=$(cat <<MENU
+Mode: auto
+Mode: dark
+Mode: light
+Variant: auto
+Variant: neutral
+Variant: tonalspot
+Variant: vibrant
+Variant: expressive
+Variant: fidelity
+Variant: fruitsalad
+Variant: monochrome
+Variant: rainbow
+Variant: content
+Reapply current wallpaper
+Current: $current_mode / $current_variant
+MENU
+)
+
+choice="$(printf "%s\n" "$items" | fuzzel --dmenu --prompt "Theme current wallpaper > " --width 42 2>/dev/null || true)"
+
+case "$choice" in
+    "Mode: auto")
+        write_if_changed "$mode_file" "auto"
+        ;;
+    "Mode: dark")
+        write_if_changed "$mode_file" "dark"
+        ;;
+    "Mode: light")
+        write_if_changed "$mode_file" "light"
+        ;;
+    "Variant: auto")
+        write_if_changed "$variant_file" "auto"
+        ;;
+    Variant:*)
+        write_if_changed "$variant_file" "${choice#Variant: }"
+        ;;
+    "Reapply current wallpaper")
+        ;;
+    Current:*|"")
+        exit 0
+        ;;
+esac
+
+mode="$(cat "$mode_file" 2>/dev/null || echo auto)"
+variant="$(cat "$variant_file" 2>/dev/null || echo auto)"
+
+if [[ "$mode" = "auto" && "$variant" = "auto" ]]; then
+    if [[ -e "$override_file" ]]; then
+        rm -f "$override_file"
+        changed=1
+    fi
+else
+    copy_if_changed "$current_file" "$override_file"
+fi
+
+if [[ "$choice" != "Reapply current wallpaper" && "$changed" = "0" ]]; then
+    exit 0
+fi
+
+# Si Waypaper est ouvert, on le ferme pendant l’application.
+was_open=0
+if pgrep -x waypaper >/dev/null 2>&1; then
+    was_open=1
+    pkill -x waypaper >/dev/null 2>&1 || true
+fi
+
+"$HOME/.local/bin/caelestia-waypaper-apply"
+"$HOME/.local/bin/clipse-theme-sync" --refresh-running >/dev/null 2>&1 || true
+
+if [[ "$was_open" = "1" ]]; then
+    WAYPAPER_UI=1 "$HOME/.local/bin/waypaper-open" --no-kill --force
+fi

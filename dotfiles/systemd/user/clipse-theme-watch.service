@@ -1,0 +1,12 @@
+[Unit]
+Description=Sync Clipse GUI theme with Caelestia
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+ExecStart=%h/.local/bin/clipse-theme-watch
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

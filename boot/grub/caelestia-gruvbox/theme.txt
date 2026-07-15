@@ -1,0 +1,42 @@
+# Caelestia Gruvbox theme, adapted from refind-gruvbox-theme (MIT).
+desktop-image: "background.png"
+desktop-color: "#282828"
+title-text: "Caelestia"
+title-font: "DejaVu Sans Bold 28"
+title-color: "#ebdbb2"
+message-font: "DejaVu Sans Regular 16"
+message-color: "#ebdbb2"
+message-bg-color: "#282828"
+terminal-font: "DejaVu Sans Mono Regular 16"
+terminal-box: "0"
+terminal-left: "10%"
+terminal-top: "10%"
+terminal-width: "80%"
+terminal-height: "80%"
+
++ boot_menu {
+  left = 20%
+  top = 34%
+  width = 60%
+  height = 42%
+  item_font = "DejaVu Sans Regular 18"
+  item_color = "#d5c4a1"
+  selected_item_font = "DejaVu Sans Bold 18"
+  selected_item_color = "#fabd2f"
+  item_height = 38
+  item_padding = 8
+  item_spacing = 4
+  scrollbar = false
+}
+
++ progress_bar {
+  id = "__timeout__"
+  left = 35%
+  top = 82%
+  width = 30%
+  height = 10
+  show_text = false
+  fg_color = "#fabd2f"
+  bg_color = "#504945"
+  border_color = "#665c54"
+}

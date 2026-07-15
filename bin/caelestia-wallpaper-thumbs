@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+set -u
+
+thumb_dir="$HOME/.cache/caelestia/wallpaper-thumbs"
+transition_dir="$HOME/.cache/caelestia/wallpaper-transition-frames"
+mkdir -p "$thumb_dir" "$transition_dir"
+
+wallpaper_dir="$HOME/Images/wallpapers"
+
+if [[ -f "$HOME/.config/caelestia/shell.json" ]]; then
+    configured="$(
+        jq -r '.paths.wallpaperDir // empty' "$HOME/.config/caelestia/shell.json" 2>/dev/null || true
+    )"
+    [[ -n "$configured" ]] && wallpaper_dir="${configured/#\~/$HOME}"
+fi
+
+cache_paths() {
+    local src="$1"
+
+    python3 - "$src" "$thumb_dir" "$transition_dir" <<'PY'
+import sys
+from pathlib import Path
+from urllib.parse import quote
+
+src = sys.argv[1]
+thumb_dir = Path(sys.argv[2]).expanduser()
+transition_dir = Path(sys.argv[3]).expanduser()
+safe_chars = "-_.!~*'()"
+name = f"{quote(src, safe=safe_chars)}.jpg"
+print(thumb_dir / name)
+print(transition_dir / name)
+PY
+}
+
+generate_frame() {
+    local src="$1"
+    local out="$2"
+    local geometry="$3"
+    local tmp="${out}.tmp.jpg"
+
+    timeout 8 ffmpeg -y -hide_banner -loglevel error \
+        -ss 2 -i "$src" \
+        -frames:v 1 \
+        -vf "scale=${geometry}:force_original_aspect_ratio=increase,crop=${geometry}" \
+        -q:v 3 \
+        "$tmp" >/dev/null 2>&1 || \
+    timeout 8 ffmpeg -y -hide_banner -loglevel error \
+        -ss 0 -i "$src" \
+        -frames:v 1 \
+        -vf "scale=${geometry}:force_original_aspect_ratio=increase,crop=${geometry}" \
+        -q:v 3 \
+        "$tmp" >/dev/null 2>&1
+
+    if [[ -s "$tmp" ]]; then
+        mv "$tmp" "$out"
+    fi
+
+    rm -f "$tmp"
+}
+
+make_thumb() {
+    local src="$1"
+    [[ -f "$src" ]] || return 0
+
+    case "${src,,}" in
+        *.mp4|*.webm|*.mkv|*.mov|*.avi|*.m4v|*.gif) ;;
+        *) return 0 ;;
+    esac
+
+    local thumb_out transition_out
+    mapfile -t paths < <(cache_paths "$src")
+    thumb_out="${paths[0]:-}"
+    transition_out="${paths[1]:-}"
+
+    [[ -n "$thumb_out" && -n "$transition_out" ]] || return 0
+
+    if [[ ! -s "$thumb_out" || ! "$thumb_out" -nt "$src" ]]; then
+        generate_frame "$src" "$thumb_out" "640:360"
+    fi
+
+    if [[ ! -s "$transition_out" || ! "$transition_out" -nt "$src" ]]; then
+        generate_frame "$src" "$transition_out" "1920:1080"
+    fi
+}
+
+transition_frame_for() {
+    local src="$1"
+    local thumb_out transition_out
+
+    make_thumb "$src"
+
+    mapfile -t paths < <(cache_paths "$src")
+    thumb_out="${paths[0]:-}"
+    transition_out="${paths[1]:-}"
+
+    if [[ -s "$transition_out" ]]; then
+        printf '%s\n' "$transition_out"
+    elif [[ -s "$thumb_out" ]]; then
+        printf '%s\n' "$thumb_out"
+    fi
+}
+
+if [[ "${1:-}" = "--transition-frame" ]]; then
+    shift
+    [[ -n "${1:-}" ]] && transition_frame_for "$1"
+    exit 0
+fi
+
+if [[ "$#" -gt 0 ]]; then
+    for item in "$@"; do
+        if [[ -d "$item" ]]; then
+            find "$item" -type f \( \
+                -iname '*.mp4' -o -iname '*.webm' -o -iname '*.mkv' -o \
+                -iname '*.mov' -o -iname '*.avi' -o -iname '*.m4v' -o \
+                -iname '*.gif' \
+            \) -print0 | while IFS= read -r -d '' file; do
+                make_thumb "$file"
+            done
+        else
+            make_thumb "$item"
+        fi
+    done
+else
+    find "$wallpaper_dir" -type f \( \
+        -iname '*.mp4' -o -iname '*.webm' -o -iname '*.mkv' -o \
+        -iname '*.mov' -o -iname '*.avi' -o -iname '*.m4v' -o \
+        -iname '*.gif' \
+    \) -print0 2>/dev/null | while IFS= read -r -d '' file; do
+        make_thumb "$file"
+    done
+fi
+
+exit 0

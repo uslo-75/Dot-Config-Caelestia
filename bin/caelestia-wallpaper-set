@@ -1,0 +1,259 @@
+#!/usr/bin/env bash
+set -u
+
+log="/tmp/caelestia-wallpaper-set.log"
+exec >>"$log" 2>&1
+
+wp="${1:-}"
+wp="${wp//\\ / }"
+
+[[ -z "$wp" || ! -e "$wp" ]] && exit 0
+
+config_file="$HOME/.config/waypaper/config.ini"
+shell_config="$HOME/.config/caelestia/shell.json"
+current_file="$HOME/.config/caelestia/waypaper-current"
+
+mkdir -p "$HOME/.config/waypaper" "$HOME/.config/caelestia"
+sync_clipse_at_end=1
+
+write_if_changed() {
+    local file="$1"
+    local value="$2"
+    local current=""
+
+    [[ -f "$file" ]] && current="$(cat "$file" 2>/dev/null || true)"
+    if [[ "$current" != "$value" ]]; then
+        printf '%s\n' "$value" > "$file"
+    fi
+}
+
+is_animated() {
+    case "${1,,}" in
+        *.mp4|*.webm|*.mkv|*.mov|*.avi|*.m4v|*.gif) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+set_shell_wallpaper_enabled() {
+    local enabled="$1"
+
+    [[ -f "$shell_config" ]] || printf '{}\n' > "$shell_config"
+
+    if jq -e --argjson enabled "$enabled" '
+        .background.enabled == true
+        and .background.wallpaperEnabled == $enabled
+    ' "$shell_config" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    local tmp
+    tmp="$(mktemp)"
+    if jq --argjson enabled "$enabled" '
+        .background.enabled = true
+        | .background.wallpaperEnabled = $enabled
+    ' "$shell_config" > "$tmp"; then
+        mv "$tmp" "$shell_config"
+    else
+        rm -f "$tmp"
+    fi
+}
+
+wait_for_mpvpaper_source() {
+    local desired="$1"
+    local pid
+    local attempt
+
+    for attempt in {1..20}; do
+        if mpvpaper_ipc_ready; then
+            if mpvpaper_runtime_uses_source "$desired"; then
+                return 0
+            fi
+        else
+            while IFS= read -r pid; do
+                [[ -n "$pid" ]] || continue
+                if tr '\0' '\n' <"/proc/$pid/cmdline" 2>/dev/null | grep -Fxq "$desired"; then
+                    return 0
+                fi
+            done < <(pgrep -x mpvpaper || true)
+        fi
+
+        sleep 0.05
+    done
+
+    return 1
+}
+
+mpv_socket_paths() {
+    find /tmp -maxdepth 1 -type s -name 'mpv-socket-*' -print 2>/dev/null | sort
+}
+
+mpv_socket_current_path() {
+    local socket="$1"
+
+    printf '{"command":["get_property","path"]}\n' \
+        | timeout 1 socat - "$socket" 2>/dev/null \
+        | jq -r 'select(.error == "success") | .data // empty' 2>/dev/null \
+        | head -n 1
+}
+
+mpvpaper_ipc_ready() {
+    local socket
+
+    while IFS= read -r socket; do
+        [[ -n "$socket" ]] || continue
+        if [[ -n "$(mpv_socket_current_path "$socket")" ]]; then
+            return 0
+        fi
+    done < <(mpv_socket_paths)
+
+    return 1
+}
+
+mpvpaper_runtime_uses_source() {
+    local desired="$1"
+    local socket
+
+    while IFS= read -r socket; do
+        [[ -n "$socket" ]] || continue
+        if [[ "$(mpv_socket_current_path "$socket")" = "$desired" ]]; then
+            return 0
+        fi
+    done < <(mpv_socket_paths)
+
+    return 1
+}
+
+transition_frame_for() {
+    "$HOME/.local/bin/caelestia-wallpaper-thumbs" --transition-frame "$1" 2>/dev/null || true
+}
+
+transition_start() {
+    local wallpaper="$1"
+    local frame="$2"
+
+    caelestia shell wallpaper transitionStart "$wallpaper" "$frame" >/dev/null 2>&1 || true
+}
+
+transition_stop() {
+    local wallpaper="$1"
+
+    caelestia shell wallpaper transitionStop "$wallpaper" >/dev/null 2>&1 || true
+}
+
+apply_video_theme_async() {
+    local wallpaper="$1"
+
+    (
+        "$HOME/.local/bin/caelestia-waypaper-apply" --theme-only "$wallpaper" >/dev/null 2>&1 || true
+        "$HOME/.local/bin/clipse-theme-sync" --refresh-running >/dev/null 2>&1 || true
+    ) &
+}
+
+update_waypaper_current() {
+    python3 - "$wp" "$config_file" <<'PY'
+import configparser
+import sys
+from pathlib import Path
+
+wallpaper = sys.argv[1]
+config_path = Path(sys.argv[2]).expanduser()
+config_path.parent.mkdir(parents=True, exist_ok=True)
+
+config = configparser.ConfigParser(interpolation=None)
+config.optionxform = str
+config.read(config_path)
+
+if not config.has_section("Settings"):
+    config.add_section("Settings")
+
+defaults = {
+    "language": "fr",
+    "folder": "~/Images/wallpapers",
+    "backend": "mpvpaper",
+    "monitors": "All",
+    "fill": "fill",
+    "sort": "name",
+    "color": "#111111",
+    "subfolders": "True",
+    "all_subfolders": "True",
+    "show_hidden": "False",
+    "show_gifs_only": "False",
+    "show_path_in_tooltip": "True",
+    "number_of_columns": "4",
+    "use_xdg_state": "False",
+    "zen_mode": "False",
+    "mpvpaper_sound": "True",
+    "mpvpaper_options": "--mute=yes --hwdec=auto-safe --profile=fast --cache=no --demuxer-max-bytes=32MiB --demuxer-max-back-bytes=8MiB --demuxer-readahead-secs=1 --vd-lavc-threads=2 --hwdec-extra-frames=1",
+    "post_command": str(home / '.local/bin/caelestia-waypaper-apply') + ' --from-waypaper "$wallpaper"',
+    "stylesheet": str(home / ".config/waypaper/style.css"),
+    "keybindings": "~/.config/waypaper/keybindings.ini",
+    "swww_transition_type": "none",
+    "swww_transition_step": "63",
+    "swww_transition_angle": "0",
+    "swww_transition_duration": "0",
+    "swww_transition_fps": "60",
+}
+
+for key, value in defaults.items():
+    if not config.has_option("Settings", key):
+        config.set("Settings", key, value)
+
+config.set("Settings", "wallpaper", wallpaper)
+config.set("Settings", "swww_transition_type", "none")
+config.set("Settings", "swww_transition_duration", "0")
+
+with config_path.open("w", encoding="utf-8") as fh:
+    config.write(fh, space_around_delimiters=True)
+PY
+}
+
+if is_animated "$wp"; then
+    transition_started=0
+    if ! mpvpaper_ipc_ready; then
+        transition_frame="$(transition_frame_for "$wp")"
+        transition_start "$wp" "$transition_frame"
+        transition_started=1
+        sleep 0.04
+    fi
+
+    update_waypaper_current
+    write_if_changed "$current_file" "$wp"
+
+    sync_clipse_at_end=0
+    apply_video_theme_async "$wp"
+    systemctl --user start mpvpaper-guard.service >/dev/null 2>&1 || true
+    "$HOME/.local/bin/mpvpaper-guard" --sync >/dev/null 2>&1 || true
+
+    if ! wait_for_mpvpaper_source "$wp"; then
+        if [[ "$transition_started" = "0" ]]; then
+            transition_frame="$(transition_frame_for "$wp")"
+            transition_start "$wp" "$transition_frame"
+            transition_started=1
+        fi
+        sleep 0.12
+    fi
+
+    set_shell_wallpaper_enabled false
+    if [[ "$transition_started" = "1" ]]; then
+        sleep 0.10
+        transition_stop "$wp"
+    fi
+else
+    update_waypaper_current
+    write_if_changed "$current_file" "$wp"
+
+    "$HOME/.local/bin/caelestia-wallpaper-thumbs" "$wp" >/dev/null 2>&1 || true
+    set_shell_wallpaper_enabled true
+    pkill -x mpvpaper >/dev/null 2>&1 || true
+    rm -f /tmp/mpv-socket-*
+
+    "$HOME/.local/bin/caelestia-waypaper-apply" "$wp" >/dev/null 2>&1 || true
+    set_shell_wallpaper_enabled true
+    pkill -x mpvpaper >/dev/null 2>&1 || true
+fi
+
+if [[ "$sync_clipse_at_end" = "1" ]]; then
+    "$HOME/.local/bin/clipse-theme-sync" --refresh-running >/dev/null 2>&1 || true
+fi
+
+exit 0

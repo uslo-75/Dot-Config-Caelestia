@@ -1,0 +1,288 @@
+#!/usr/bin/env bash
+set -u
+
+log="/tmp/caelestia-waypaper-apply.log"
+exec >>"$log" 2>&1
+
+from_waypaper=0
+theme_only=0
+
+while [[ $# -gt 0 ]]; do
+    case "${1:-}" in
+        --from-waypaper)
+            from_waypaper=1
+            shift || true
+            ;;
+        --theme-only)
+            theme_only=1
+            shift || true
+            ;;
+        --)
+            shift || true
+            break
+            ;;
+        -*)
+            break
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
+wp="${1:-}"
+wp="${wp//\\ / }"
+
+lockfile="${XDG_RUNTIME_DIR:-/tmp}/caelestia-waypaper-apply.lock"
+
+exec 9>"$lockfile"
+
+# Les thèmes vidéo lancés en arrière-plan peuvent attendre: un garde plus bas
+# annule ceux qui ne correspondent plus au wallpaper courant.
+if ! flock -n 9; then
+    if [[ "$theme_only" = "1" ]]; then
+        flock -w 4 9 || exit 0
+    else
+        if [[ "${WAYPAPER_UI:-0}" = "1" ]]; then
+            pkill -x waypaper >/dev/null 2>&1 || true
+        fi
+        exit 0
+    fi
+fi
+
+# Ferme Waypaper immédiatement dès la sélection pour empêcher les clics multiples.
+reopen_ui=0
+if [[ "$from_waypaper" = "1" && "${WAYPAPER_UI:-0}" = "1" ]]; then
+    reopen_ui=1
+    pkill -x waypaper >/dev/null 2>&1 || true
+fi
+
+mode_file="$HOME/.config/caelestia/theme-mode"
+variant_file="$HOME/.config/caelestia/theme-variant"
+current_file="$HOME/.config/caelestia/waypaper-current"
+override_file="$HOME/.config/caelestia/theme-override-wallpaper"
+
+write_if_changed() {
+    local file="$1"
+    local value="$2"
+    local current=""
+
+    [[ -f "$file" ]] && current="$(cat "$file" 2>/dev/null || true)"
+    if [[ "$current" != "$value" ]]; then
+        printf '%s\n' "$value" > "$file"
+    fi
+}
+
+valid_mode() {
+    [[ "$1" == "auto" || "$1" == "dark" || "$1" == "light" ]]
+}
+
+valid_variant() {
+    case "$1" in
+        auto|tonalspot|vibrant|expressive|fidelity|fruitsalad|monochrome|neutral|rainbow|content) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+mode_pref="$(cat "$mode_file" 2>/dev/null || echo auto)"
+variant_pref="$(cat "$variant_file" 2>/dev/null || echo auto)"
+
+valid_mode "$mode_pref" || mode_pref="auto"
+valid_variant "$variant_pref" || variant_pref="auto"
+
+old_wp=""
+[[ -f "$current_file" ]] && old_wp="$(cat "$current_file")"
+
+# Nouveau wallpaper choisi dans Waypaper = reset auto.
+# Donc Super+Alt+C ne s’applique qu’au wallpaper courant.
+if [[ "$from_waypaper" = "1" && -n "$wp" && -e "$wp" && "$wp" != "$old_wp" ]]; then
+    mode_pref="auto"
+    variant_pref="auto"
+    write_if_changed "$mode_file" "auto"
+    write_if_changed "$variant_file" "auto"
+    rm -f "$override_file"
+fi
+
+# Retrouve le wallpaper courant si aucun chemin n’est passé.
+if [[ -z "$wp" || ! -e "$wp" ]]; then
+    [[ -f "$current_file" ]] && wp="$(cat "$current_file")"
+fi
+
+if [[ -z "$wp" || ! -e "$wp" ]]; then
+    wp="$(
+python3 - <<'PY'
+from pathlib import Path
+import os
+
+for p in [
+    Path.home() / ".config/waypaper/config.ini",
+    Path.home() / ".local/state/waypaper/state.ini",
+]:
+    if not p.exists():
+        continue
+    for line in p.read_text(errors="ignore").splitlines():
+        s = line.strip()
+        if s.startswith("wallpaper") and "=" in s:
+            val = s.split("=", 1)[1].strip().strip('"').strip("'")
+            val = os.path.expanduser(os.path.expandvars(val))
+            if val and Path(val).exists():
+                print(val)
+                raise SystemExit
+PY
+)"
+fi
+
+[[ -z "$wp" || ! -e "$wp" ]] && exit 0
+
+mkdir -p "$HOME/.config/waypaper" "$HOME/.config/caelestia"
+
+if [[ "$theme_only" = "1" && -f "$current_file" ]]; then
+    selected_wp="$(cat "$current_file" 2>/dev/null || true)"
+    [[ "$selected_wp" != "$wp" ]] && exit 0
+fi
+
+write_if_changed "$current_file" "$wp"
+
+animated_wp=0
+case "${wp,,}" in
+  *.mp4|*.webm|*.mkv|*.mov|*.avi|*.m4v|*.gif)
+    animated_wp=1
+    ;;
+esac
+
+set_caelestia_wallpaper_layer() {
+    local enabled=true
+    if [[ "$animated_wp" = "1" ]]; then
+        enabled=false
+    fi
+
+    local shell_config="$HOME/.config/caelestia/shell.json"
+    [[ -f "$shell_config" ]] || printf '{}\n' > "$shell_config"
+
+    if jq -e --argjson enabled "$enabled" '
+        .background.enabled == true
+        and .background.wallpaperEnabled == $enabled
+    ' "$shell_config" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    local tmp
+    tmp="$(mktemp)"
+    if jq --argjson enabled "$enabled" '
+        .background.enabled = true
+        | .background.wallpaperEnabled = $enabled
+    ' "$shell_config" > "$tmp"; then
+        mv "$tmp" "$shell_config"
+    else
+        rm -f "$tmp"
+    fi
+}
+
+set_caelestia_wallpaper_layer
+
+# Si l’override Super+Alt+C concerne un ancien wallpaper, on l’oublie.
+if [[ -f "$override_file" ]]; then
+    override_wp="$(cat "$override_file")"
+    if [[ "$override_wp" != "$wp" ]]; then
+        mode_pref="auto"
+        variant_pref="auto"
+        write_if_changed "$mode_file" "auto"
+        write_if_changed "$variant_file" "auto"
+        rm -f "$override_file"
+    fi
+fi
+
+theme_src="$wp"
+
+# Reuse the 1080p transition frame cache instead of extracting a second copy.
+case "${wp,,}" in
+  *.mp4|*.webm|*.mkv|*.mov|*.avi|*.m4v|*.gif)
+    frame="$("$HOME/.local/bin/caelestia-wallpaper-thumbs" --transition-frame "$wp" 2>/dev/null || true)"
+    [[ -s "$frame" ]] && theme_src="$frame"
+    ;;
+esac
+
+get_mode() {
+    local out
+    out="$(caelestia scheme get -m 2>/dev/null | tr -d '\r' | tail -n 1 || true)"
+    case "$out" in
+        *dark*) echo dark ;;
+        *light*) echo light ;;
+        *) echo dark ;;
+    esac
+}
+
+get_variant() {
+    local out
+    out="$(caelestia scheme get -v 2>/dev/null | tr -d '\r' | tail -n 1 || true)"
+    for v in tonalspot vibrant expressive fidelity fruitsalad monochrome neutral rainbow content; do
+        if echo "$out" | grep -q "$v"; then
+            echo "$v"
+            return
+        fi
+    done
+    echo neutral
+}
+
+# Preview intelligente si Caelestia la fournit.
+preview="$(caelestia wallpaper -p "$theme_src" 2>/dev/null || true)"
+preview_mode="$(printf '%s' "$preview" | jq -r '.mode // empty' 2>/dev/null || true)"
+preview_variant="$(printf '%s' "$preview" | jq -r '.variant // empty' 2>/dev/null || true)"
+
+# 1. Auto complet depuis le wallpaper.
+caelestia wallpaper -f "$theme_src" >/dev/null 2>&1 || true
+caelestia scheme set -n dynamic >/dev/null 2>&1 || true
+
+smart_mode="$preview_mode"
+smart_variant="$preview_variant"
+
+valid_mode "$smart_mode" || smart_mode="$(get_mode)"
+valid_variant "$smart_variant" || smart_variant="$(get_variant)"
+
+# 2. Override uniquement si Super+Alt+C l’a mis pour CE wallpaper.
+final_mode="$smart_mode"
+final_variant="$smart_variant"
+
+if [[ "$mode_pref" != "auto" ]]; then
+    final_mode="$mode_pref"
+fi
+
+if [[ "$variant_pref" != "auto" ]]; then
+    final_variant="$variant_pref"
+fi
+
+caelestia scheme set -n dynamic -m "$final_mode" -v "$final_variant" >/dev/null 2>&1 || true
+
+# GTK suit le mode final.
+if [[ "$final_mode" = "light" ]]; then
+    gsettings set org.gnome.desktop.interface color-scheme "prefer-light" >/dev/null 2>&1 || true
+    gsettings set org.gnome.desktop.interface gtk-theme "adw-gtk3" >/dev/null 2>&1 || true
+else
+    gsettings set org.gnome.desktop.interface color-scheme "prefer-dark" >/dev/null 2>&1 || true
+    gsettings set org.gnome.desktop.interface gtk-theme "adw-gtk3-dark" >/dev/null 2>&1 || true
+fi
+
+# Réouverture Waypaper APRÈS le changement, une seule fois.
+if [[ "$reopen_ui" = "1" ]]; then
+    (
+        sleep 0.18
+        WAYPAPER_UI=1 "$HOME/.local/bin/waypaper-open" --no-kill --force
+    ) >/tmp/waypaper-reopen.log 2>&1 &
+fi
+
+if [[ "$theme_only" = "0" && "$animated_wp" = "0" ]]; then
+    pkill -x mpvpaper >/dev/null 2>&1 || true
+    rm -f /tmp/mpv-socket-*
+fi
+
+"$HOME/.local/bin/waypaper-style-polish" >/dev/null 2>&1 || true
+"$HOME/.local/bin/clipse-theme-sync" --refresh-running >/dev/null 2>&1 || true
+
+if [[ "$theme_only" = "0" && "$animated_wp" = "1" ]]; then
+    systemctl --user start mpvpaper-guard.service >/dev/null 2>&1 || true
+    if [[ "$from_waypaper" = "0" ]]; then
+        "$HOME/.local/bin/mpvpaper-guard" --sync >/dev/null 2>&1 || true
+    fi
+fi
+
+exit 0

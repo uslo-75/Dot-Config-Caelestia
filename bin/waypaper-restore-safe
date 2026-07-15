@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+set -u
+
+delay="${1:-0}"
+case "$delay" in
+    ''|*[!0-9.]*)
+        delay=0
+        ;;
+esac
+
+lock="${XDG_RUNTIME_DIR:-/tmp}/waypaper-restore-safe.lock"
+
+(
+    flock -n 9 || exit 0
+
+    sleep "$delay"
+
+    wp="$(
+python3 - <<'PY'
+from pathlib import Path
+import configparser
+import os
+
+config = Path.home() / ".config/waypaper/config.ini"
+parser = configparser.ConfigParser(interpolation=None)
+parser.read(config)
+
+try:
+    wallpaper = parser.get("Settings", "wallpaper", fallback="")
+except Exception:
+    wallpaper = ""
+
+wallpaper = os.path.expandvars(os.path.expanduser(wallpaper.strip().strip('"').strip("'")))
+print(wallpaper)
+PY
+)"
+
+    case "${wp,,}" in
+        *.mp4|*.webm|*.mkv|*.mov|*.avi|*.m4v|*.gif) ;;
+        *) exit 0 ;;
+    esac
+
+    if pgrep -x mpvpaper >/dev/null 2>&1; then
+        exit 0
+    fi
+
+    rm -f /tmp/mpv-socket-*
+    {
+        systemctl --user start mpvpaper-guard.service >/dev/null 2>&1 || true
+        "$HOME/.local/bin/mpvpaper-guard" --once
+    } >/tmp/waypaper-restore-safe.log 2>&1
+) 9>"$lock"

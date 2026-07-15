@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Clipse clipboard maintenance daily
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=1d
+Persistent=true
+Unit=clipse-maintain.service
+
+[Install]
+WantedBy=timers.target

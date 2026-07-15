@@ -1,0 +1,13 @@
+{
+  "maxHistory": 300,
+  "imageDisplay": {
+    "type": "kitty",
+    "scaleX": 10,
+    "scaleY": 10,
+    "heightCut": 2
+  },
+  "keyBindings": {
+    "preview": "space",
+    "quit": "q,esc"
+  }
+}

@@ -1,0 +1,196 @@
+#!/usr/bin/env bash
+set -u
+
+python3 - "$@" <<'PY'
+import argparse
+import json
+import os
+import sys
+import time
+from pathlib import Path
+from urllib.parse import unquote
+
+home = Path.home()
+
+parser = argparse.ArgumentParser(
+    description="Safely clean Caelestia generated caches without touching source wallpapers."
+)
+parser.add_argument("--dry-run", action="store_true", help="show what would be cleaned")
+parser.add_argument(
+    "--cache-dir",
+    default=str(home / ".cache" / "caelestia"),
+    help="Caelestia cache directory",
+)
+parser.add_argument(
+    "--wallpaper-dir",
+    default="",
+    help="wallpaper source directory; defaults to Caelestia shell config",
+)
+parser.add_argument(
+    "--max-imagecache-mb",
+    type=int,
+    default=512,
+    help="trim generated imagecache files when they grow past this size",
+)
+parser.add_argument(
+    "--min-stale-thumb-minutes",
+    type=int,
+    default=5,
+    help="minimum age before deleting a thumbnail whose source file is gone",
+)
+parser.add_argument(
+    "--min-imagecache-age-hours",
+    type=int,
+    default=24,
+    help="minimum age before imagecache files are eligible for size trimming",
+)
+args = parser.parse_args(sys.argv[1:])
+
+cache_dir = Path(args.cache_dir).expanduser()
+thumb_dir = cache_dir / "wallpaper-thumbs"
+transition_frame_dir = cache_dir / "wallpaper-transition-frames"
+imagecache_dir = cache_dir / "imagecache"
+now = time.time()
+
+
+def configured_wallpaper_dir():
+    if args.wallpaper_dir:
+        return Path(args.wallpaper_dir.replace("~", str(home), 1)).expanduser()
+
+    config_path = home / ".config" / "caelestia" / "shell.json"
+    if config_path.exists():
+        try:
+            data = json.loads(config_path.read_text(encoding="utf-8"))
+            raw = data.get("paths", {}).get("wallpaperDir", "")
+            if raw:
+                return Path(str(raw).replace("~", str(home), 1)).expanduser()
+        except Exception:
+            pass
+
+    return home / "Images" / "wallpapers"
+
+
+def human(size):
+    return f"{size / 1024 / 1024:.1f}M"
+
+
+def is_under(path, parent):
+    try:
+        path.resolve(strict=False).relative_to(parent.resolve(strict=False))
+        return True
+    except ValueError:
+        return False
+
+
+def delete_file(path, reason):
+    if args.dry_run:
+        print(f"DRY-RUN: would remove {reason}: {path}")
+        return False
+
+    try:
+        path.unlink()
+        print(f"removed {reason}: {path}")
+        return True
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        print(f"WARNING: could not remove {path}: {exc}", file=sys.stderr)
+        return False
+
+
+wallpaper_dir = configured_wallpaper_dir()
+stale_thumb_candidates = 0
+stale_thumbs_removed = 0
+stale_transition_frame_candidates = 0
+stale_transition_frames_removed = 0
+thumb_min_age = args.min_stale_thumb_minutes * 60
+
+def clean_stale_wallpaper_cache(cache_path, label):
+    candidates = 0
+    removed = 0
+
+    if not cache_path.exists():
+        return candidates, removed
+
+    for cached in sorted(cache_path.glob("*.jpg")):
+        raw = cached.name[:-4]
+        source = Path(unquote(raw))
+        if not source.is_absolute() or not is_under(source, wallpaper_dir):
+            continue
+
+        if source.exists():
+            continue
+
+        try:
+            age = now - cached.stat().st_mtime
+        except FileNotFoundError:
+            continue
+
+        if age < thumb_min_age:
+            continue
+
+        candidates += 1
+        if delete_file(cached, label):
+            removed += 1
+
+    return candidates, removed
+
+stale_thumb_candidates, stale_thumbs_removed = clean_stale_wallpaper_cache(
+    thumb_dir, "stale wallpaper thumbnail"
+)
+stale_transition_frame_candidates, stale_transition_frames_removed = clean_stale_wallpaper_cache(
+    transition_frame_dir, "stale wallpaper transition frame"
+)
+
+imagecache_files = []
+imagecache_size = 0
+if imagecache_dir.exists():
+    for path in imagecache_dir.iterdir():
+        if not path.is_file():
+            continue
+        if "@" not in path.name or not path.name.endswith(".png"):
+            continue
+
+        try:
+            stat = path.stat()
+        except FileNotFoundError:
+            continue
+
+        imagecache_size += stat.st_size
+        imagecache_files.append((stat.st_mtime, stat.st_size, path))
+
+imagecache_removed = 0
+imagecache_removed_size = 0
+max_imagecache = args.max_imagecache_mb * 1024 * 1024
+target_imagecache = int(max_imagecache * 0.9)
+min_imagecache_age = args.min_imagecache_age_hours * 60 * 60
+
+if imagecache_size > max_imagecache:
+    remaining = imagecache_size
+    for mtime, size, path in sorted(imagecache_files):
+        if remaining <= target_imagecache:
+            break
+        if now - mtime < min_imagecache_age:
+            continue
+
+        if delete_file(path, "old generated imagecache"):
+            imagecache_removed += 1
+            imagecache_removed_size += size
+            remaining -= size
+        elif args.dry_run:
+            imagecache_removed += 1
+            imagecache_removed_size += size
+            remaining -= size
+
+print(
+    "Summary: "
+    f"wallpaper_dir={wallpaper_dir}, "
+    f"stale_thumb_candidates={stale_thumb_candidates}, "
+    f"stale_thumbs_removed={stale_thumbs_removed}, "
+    f"stale_transition_frame_candidates={stale_transition_frame_candidates}, "
+    f"stale_transition_frames_removed={stale_transition_frames_removed}, "
+    f"imagecache={human(imagecache_size)}, "
+    f"imagecache_cap={human(max_imagecache)}, "
+    f"imagecache_trimmed={imagecache_removed} file(s)/{human(imagecache_removed_size)}"
+)
+PY

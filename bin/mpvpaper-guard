@@ -1,0 +1,379 @@
+#!/usr/bin/env bash
+set -u
+
+limit_mib="${MPVPAPER_GUARD_LIMIT_MIB:-2600}"
+interval_seconds="${MPVPAPER_GUARD_INTERVAL_SECONDS:-15}"
+cooldown_seconds="${MPVPAPER_GUARD_COOLDOWN_SECONDS:-120}"
+ok_log_interval_seconds="${MPVPAPER_GUARD_OK_LOG_INTERVAL_SECONDS:-900}"
+current_file="$HOME/.config/caelestia/waypaper-current"
+log="/tmp/mpvpaper-guard.log"
+operation_lockfile="${XDG_RUNTIME_DIR:-/tmp}/mpvpaper-guard.ops.lock"
+last_ok_log=0
+
+is_animated() {
+    case "${1,,}" in
+        *.mp4|*.webm|*.mkv|*.mov|*.avi|*.m4v|*.gif) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+rss_kib_for_pid() {
+    awk '/^VmRSS:/ { print $2; found=1 } END { if (!found) print 0 }' "/proc/$1/status" 2>/dev/null || echo 0
+}
+
+mpvpaper_rss_mib() {
+    local total_kib=0
+    local pid rss
+
+    while IFS= read -r pid; do
+        [[ -n "$pid" ]] || continue
+        rss="$(rss_kib_for_pid "$pid")"
+        total_kib=$((total_kib + rss))
+    done < <(pgrep -x mpvpaper || true)
+
+    echo $((total_kib / 1024))
+}
+
+mpvpaper_count() {
+    local count
+    count="$(pgrep -cx mpvpaper 2>/dev/null || true)"
+    echo "${count:-0}"
+}
+
+current_wallpaper() {
+    local wp=""
+
+    if [[ -f "$current_file" ]]; then
+        wp="$(head -n 1 "$current_file" 2>/dev/null || true)"
+    fi
+
+    if [[ -z "$wp" || ! -e "$wp" ]]; then
+        wp="$(
+python3 - <<'PY'
+from pathlib import Path
+import configparser
+import os
+
+config_path = Path.home() / ".config" / "waypaper" / "config.ini"
+config = configparser.ConfigParser(interpolation=None)
+config.read(config_path)
+
+raw = ""
+if config.has_section("Settings") and config.has_option("Settings", "wallpaper"):
+    raw = config.get("Settings", "wallpaper")
+
+path = Path(os.path.expandvars(os.path.expanduser(raw)))
+if path.exists():
+    print(path)
+PY
+)"
+    fi
+
+    printf '%s\n' "$wp"
+}
+
+current_mpvpaper_uses_source() {
+    local desired="$1"
+    local socket current
+    local saw_ipc=0
+    local pid
+
+    while IFS= read -r socket; do
+        [[ -n "$socket" ]] || continue
+        current="$(mpv_socket_current_path "$socket")"
+        [[ -n "$current" ]] || continue
+        saw_ipc=1
+        if [[ "$current" = "$desired" ]]; then
+            return 0
+        fi
+    done < <(mpv_socket_paths)
+
+    if [[ "$saw_ipc" = "1" ]]; then
+        return 1
+    fi
+
+    while IFS= read -r pid; do
+        [[ -n "$pid" ]] || continue
+        if tr '\0' '\n' <"/proc/$pid/cmdline" 2>/dev/null | grep -Fxq "$desired"; then
+            return 0
+        fi
+    done < <(pgrep -x mpvpaper || true)
+
+    return 1
+}
+
+mpv_socket_paths() {
+    find /tmp -maxdepth 1 -type s -name 'mpv-socket-*' -print 2>/dev/null | sort
+}
+
+mpv_socket_current_path() {
+    local socket="$1"
+
+    printf '{"command":["get_property","path"]}\n' \
+        | timeout 1 socat - "$socket" 2>/dev/null \
+        | jq -r 'select(.error == "success") | .data // empty' 2>/dev/null \
+        | head -n 1
+}
+
+mpv_socket_loadfile() {
+    local socket="$1"
+    local source="$2"
+
+    python3 - "$source" <<'PY' \
+        | timeout 2 socat - "$socket" 2>/dev/null \
+        | jq -s -e 'any(.[]; .error == "success")' >/dev/null 2>&1
+import json
+import sys
+
+print(json.dumps({"command": ["loadfile", sys.argv[1], "replace"]}))
+PY
+}
+
+mpvpaper_load_source() {
+    local desired="$1"
+    local socket current attempt
+
+    while IFS= read -r socket; do
+        [[ -n "$socket" ]] || continue
+
+        current="$(mpv_socket_current_path "$socket")"
+        if [[ "$current" = "$desired" ]]; then
+            return 0
+        fi
+
+        if ! mpv_socket_loadfile "$socket" "$desired"; then
+            continue
+        fi
+
+        for attempt in {1..20}; do
+            current="$(mpv_socket_current_path "$socket")"
+            if [[ "$current" = "$desired" ]]; then
+                printf '[%s] ipc loadfile %s\n' "$(date '+%F %T')" "$desired" >>"$log"
+                return 0
+            fi
+            sleep 0.05
+        done
+    done < <(mpv_socket_paths)
+
+    return 1
+}
+
+mpvpaper_launch_config() {
+    python3 - <<'PY'
+from pathlib import Path
+import configparser
+
+config_path = Path.home() / ".config" / "waypaper" / "config.ini"
+config = configparser.ConfigParser(interpolation=None)
+config.read(config_path)
+
+section = "Settings"
+get = lambda key, default: config.get(section, key, fallback=default).strip()
+
+options = get(
+    "mpvpaper_options",
+    "--mute=yes --hwdec=auto-safe --profile=fast --cache=no --demuxer-max-bytes=32MiB --demuxer-max-back-bytes=8MiB --demuxer-readahead-secs=1 --vd-lavc-threads=2 --hwdec-extra-frames=1",
+)
+monitors = get("monitors", "All")
+fill = get("fill", "fill").lower()
+color = get("color", "#111111")
+
+if monitors.lower() == "all":
+    output = "*"
+else:
+    output = monitors.split(",", 1)[0].strip() or "*"
+
+fill_option = "panscan=1.0" if fill in ("fill", "crop") else ""
+
+print(options)
+print(output)
+print(color)
+print(fill_option)
+PY
+}
+
+start_current_wallpaper() {
+    local reason="$1"
+    local rss_mib="${2:-0}"
+    local wp
+    local cfg mpv_options output color fill_option socket_name launch_options
+    wp="$(current_wallpaper)"
+
+    printf '[%s] %s RSS=%sMiB limit=%sMiB\n' "$(date '+%F %T')" "$reason" "$rss_mib" "$limit_mib" >>"$log"
+
+    if [[ -z "$wp" || ! -e "$wp" ]] || ! is_animated "$wp"; then
+        printf '[%s] no valid animated wallpaper found, nothing to start\n' "$(date '+%F %T')" >>"$log"
+        return 0
+    fi
+
+    printf '[%s] starting %s\n' "$(date '+%F %T')" "$wp" >>"$log"
+
+    mapfile -t cfg < <(mpvpaper_launch_config)
+    mpv_options="${cfg[0]:---mute=yes --hwdec=auto-safe --profile=fast}"
+    output="${cfg[1]:-*}"
+    color="${cfg[2]:-#111111}"
+    fill_option="${cfg[3]:-panscan=1.0}"
+
+    if [[ "$output" == "*" ]]; then
+        socket_name="All"
+    else
+        socket_name="${output//[^A-Za-z0-9_.-]/_}"
+    fi
+
+    launch_options="input-ipc-server=/tmp/mpv-socket-$socket_name $mpv_options loop"
+    if [[ -n "$fill_option" ]]; then
+        launch_options="$launch_options $fill_option"
+    fi
+    launch_options="$launch_options --background-color=$color"
+
+    /usr/bin/mpvpaper --fork -o "$launch_options" "$output" "$wp" 200>&- >/tmp/mpvpaper-guard-mpvpaper.log 2>&1 || {
+        printf '[%s] mpvpaper restart failed for %s\n' "$(date '+%F %T')" "$wp" >>"$log"
+        return 1
+    }
+}
+
+restart_current_wallpaper() {
+    local rss_mib="$1"
+    local reason="${2:-restart}"
+
+    pkill -x mpvpaper >/dev/null 2>&1 || true
+    rm -f /tmp/mpv-socket-*
+    sleep 0.4
+
+    start_current_wallpaper "$reason" "$rss_mib"
+}
+
+sync_once_locked() {
+    local rss_mib
+    local count
+    local wp desired_source
+    rss_mib="$(mpvpaper_rss_mib)"
+    count="$(mpvpaper_count)"
+    wp="$(current_wallpaper)"
+
+    if [[ -z "$wp" || ! -e "$wp" ]] || ! is_animated "$wp"; then
+        printf '[%s] sync no valid animated wallpaper found\n' "$(date '+%F %T')" >>"$log"
+        return 0
+    fi
+
+    desired_source="$wp"
+
+    if (( count == 0 )); then
+        start_current_wallpaper "sync missing" "$rss_mib"
+        return 0
+    fi
+
+    if [[ -n "$desired_source" && -e "$desired_source" ]] && current_mpvpaper_uses_source "$desired_source"; then
+        printf '[%s] sync ok %s\n' "$(date '+%F %T')" "$wp" >>"$log"
+        return 0
+    fi
+
+    if [[ -n "$desired_source" && -e "$desired_source" ]] && mpvpaper_load_source "$desired_source"; then
+        return 0
+    fi
+
+    restart_current_wallpaper "$rss_mib" "sync source changed"
+    return 0
+}
+
+sync_once() {
+    local wp count
+
+    wp="$(current_wallpaper)"
+    if [[ -z "$wp" || ! -e "$wp" ]] || ! is_animated "$wp"; then
+        printf '[%s] sync no valid animated wallpaper found\n' "$(date '+%F %T')" >>"$log"
+        return 0
+    fi
+
+    count="$(mpvpaper_count)"
+
+    if (( count > 0 )); then
+        (
+            if ! flock -w 5 200; then
+                printf '[%s] sync lock timeout\n' "$(date '+%F %T')" >>"$log"
+                return 1
+            fi
+
+            sync_once_locked
+        ) 200>"$operation_lockfile"
+        return 0
+    fi
+
+    if [[ -z "${INVOCATION_ID:-}" ]]; then
+        printf '[%s] sync service restart %s\n' "$(date '+%F %T')" "$wp" >>"$log"
+        systemctl --user restart mpvpaper-guard.service >/dev/null 2>&1 || return 1
+        return 0
+    fi
+
+    (
+        if ! flock -w 5 200; then
+            printf '[%s] sync lock timeout\n' "$(date '+%F %T')" >>"$log"
+            return 1
+        fi
+
+        sync_once_locked
+    ) 200>"$operation_lockfile"
+}
+
+check_once() {
+    flock -n 200 || return 0
+
+    local rss_mib
+    local count
+    local wp desired_source
+    rss_mib="$(mpvpaper_rss_mib)"
+    count="$(mpvpaper_count)"
+
+    if (( count == 0 )); then
+        start_current_wallpaper "mpvpaper missing" "$rss_mib"
+        return 0
+    fi
+
+    wp="$(current_wallpaper)"
+    if [[ -n "$wp" && -e "$wp" ]] && is_animated "$wp"; then
+        desired_source="$wp"
+        if [[ -n "$desired_source" && -e "$desired_source" ]] && ! current_mpvpaper_uses_source "$desired_source"; then
+            if mpvpaper_load_source "$desired_source"; then
+                return 0
+            fi
+
+            restart_current_wallpaper "$rss_mib"
+            return 10
+        fi
+    fi
+
+    if (( rss_mib > limit_mib )); then
+        restart_current_wallpaper "$rss_mib"
+        return 10
+    fi
+
+    now="$(date +%s)"
+    if (( now - last_ok_log >= ok_log_interval_seconds )); then
+        printf '[%s] ok RSS=%sMiB limit=%sMiB\n' "$(date '+%F %T')" "$rss_mib" "$limit_mib" >>"$log"
+        last_ok_log="$now"
+    fi
+    return 0
+} 200>"$operation_lockfile"
+
+case "${1:-}" in
+    --once)
+        check_once
+        exit 0
+        ;;
+    --sync)
+        sync_once
+        exit 0
+        ;;
+    --status)
+        printf 'mpvpaper_rss_mib=%s\nlimit_mib=%s\n' "$(mpvpaper_rss_mib)" "$limit_mib"
+        exit 0
+        ;;
+esac
+
+while true; do
+    if check_once; then
+        sleep "$interval_seconds"
+    else
+        sleep "$cooldown_seconds"
+    fi
+done

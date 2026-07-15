@@ -1,0 +1,8 @@
+[Unit]
+Description=Safely maintain Caelestia generated caches
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/caelestia-cache-maintain
+Nice=10
+IOSchedulingClass=idle

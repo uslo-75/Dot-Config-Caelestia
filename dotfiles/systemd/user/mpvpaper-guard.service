@@ -1,0 +1,19 @@
+[Unit]
+Description=Restart mpvpaper if animated wallpaper RAM grows too high
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+ExecStart=%h/.local/bin/mpvpaper-guard
+Restart=always
+RestartSec=5
+Nice=10
+MemoryHigh=2600M
+MemoryMax=3G
+Environment=MPVPAPER_GUARD_LIMIT_MIB=2600
+Environment=MPVPAPER_GUARD_INTERVAL_SECONDS=15
+Environment=MPVPAPER_GUARD_COOLDOWN_SECONDS=120
+Environment=MPVPAPER_GUARD_OK_LOG_INTERVAL_SECONDS=900
+
+[Install]
+WantedBy=default.target

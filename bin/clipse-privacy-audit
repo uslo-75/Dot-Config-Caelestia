@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+set -u
+
+python - "$@" <<'PY'
+import argparse
+import json
+import os
+import re
+import sys
+from pathlib import Path
+
+parser = argparse.ArgumentParser(
+    description="Report suspicious non-pinned Clipse history entries without deleting anything."
+)
+parser.add_argument(
+    "--clipse-dir",
+    default=os.environ.get("CLIPSE_DIR", str(Path.home() / ".config" / "clipse")),
+    help="Clipse config directory",
+)
+parser.add_argument(
+    "--show-values",
+    action="store_true",
+    help="show longer masked previews",
+)
+args = parser.parse_args(sys.argv[1:])
+
+history_path = Path(args.clipse_dir).expanduser() / "clipboard_history.json"
+
+PATTERNS = [
+    ("key-value secret", re.compile(r"(?i)\b(password|passwd|pwd|token|api[_-]?key|secret)\s*[:=]\s*\S+")),
+    ("bearer token", re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{8,}")),
+    ("github token", re.compile(r"\bghp_[A-Za-z0-9_]{20,}\b")),
+    ("openai-style key", re.compile(r"\bsk-[A-Za-z0-9_-]{16,}\b")),
+    ("slack token", re.compile(r"\bxox[A-Za-z]?-[A-Za-z0-9-]{10,}\b")),
+]
+
+MASKERS = [
+    re.compile(r"(?i)\b(password|passwd|pwd|token|api[_-]?key|secret)(\s*[:=]\s*)\S+"),
+    re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{8,}"),
+    re.compile(r"\bghp_[A-Za-z0-9_]{20,}\b"),
+    re.compile(r"\bsk-[A-Za-z0-9_-]{16,}\b"),
+    re.compile(r"\bxox[A-Za-z]?-[A-Za-z0-9-]{10,}\b"),
+]
+
+
+def load_history(path):
+    if not path.exists():
+        raise SystemExit(f"ERROR: history file not found: {path}")
+
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except Exception as exc:
+        raise SystemExit(f"ERROR: cannot read {path}: {exc}")
+
+    if isinstance(data, dict):
+        items = data.get("clipboardHistory", [])
+    elif isinstance(data, list):
+        items = data
+    else:
+        items = []
+
+    return items if isinstance(items, list) else []
+
+
+def mask_value(value):
+    text = value.replace("\n", " ").replace("\r", " ")
+
+    text = MASKERS[0].sub(lambda match: f"{match.group(1)}{match.group(2)}<redacted>", text)
+    text = MASKERS[1].sub("Bearer <redacted>", text)
+    text = MASKERS[2].sub("ghp_<redacted>", text)
+    text = MASKERS[3].sub("sk-<redacted>", text)
+    text = MASKERS[4].sub("xox-<redacted>", text)
+
+    limit = 220 if args.show_values else 120
+    return text if len(text) <= limit else text[: limit - 3] + "..."
+
+
+items = load_history(history_path)
+matches = []
+
+for index, item in enumerate(items):
+    if not isinstance(item, dict) or item.get("pinned") is True:
+        continue
+
+    value = item.get("value")
+    if not isinstance(value, str) or not value.strip():
+        continue
+
+    labels = [label for label, pattern in PATTERNS if pattern.search(value)]
+    if labels:
+        matches.append((index, item.get("recorded", "?"), labels, mask_value(value)))
+
+if not matches:
+    print("OK: no obvious non-pinned secrets found.")
+    raise SystemExit(0)
+
+print(f"Found {len(matches)} suspicious non-pinned entrie(s). Nothing was deleted.")
+for index, recorded, labels, preview in matches:
+    print(f"- #{index} recorded={recorded} type={', '.join(labels)}")
+    print(f"  preview={preview}")
+PY

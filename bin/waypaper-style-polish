@@ -1,0 +1,162 @@
+#!/usr/bin/env bash
+set -u
+
+mkdir -p "$HOME/.config/waypaper"
+
+python3 - <<'PY'
+import json
+from pathlib import Path
+
+scheme_paths = [
+    Path.home() / ".local/state/caelestia/scheme.json",
+    Path.home() / ".cache/caelestia/scheme.json",
+    Path.home() / ".config/caelestia/scheme.json",
+]
+
+out = Path.home() / ".config/waypaper/style.css"
+
+def normalise(v, fallback):
+    if not v:
+        return fallback
+    v = str(v).strip().lstrip("#")
+    if len(v) < 6:
+        return fallback
+    return "#" + v[:6]
+
+def get_color(colours, keys, fallback):
+    for k in keys:
+        if k in colours:
+            return normalise(colours[k], fallback)
+    return fallback
+
+def rgb(h):
+    h = h.lstrip("#")
+    return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+
+def mix(a, b, t):
+    ar, ag, ab = rgb(a)
+    br, bg, bb = rgb(b)
+    return "#{:02x}{:02x}{:02x}".format(
+        int(ar * (1 - t) + br * t),
+        int(ag * (1 - t) + bg * t),
+        int(ab * (1 - t) + bb * t),
+    )
+
+data = {}
+for p in scheme_paths:
+    try:
+        if p.exists():
+            data = json.loads(p.read_text())
+            break
+    except Exception:
+        pass
+
+mode = data.get("mode", "dark")
+colours = data.get("colours", {})
+
+if mode == "light":
+    bg = get_color(colours, ["background", "surface", "surfaceContainerLowest"], "#f7f0f7")
+    panel = get_color(colours, ["surfaceContainer", "surfaceContainerHigh", "surfaceVariant"], "#eee6ef")
+    fg = get_color(colours, ["onSurface", "onBackground"], "#1d1b20")
+    accent = get_color(colours, ["primary"], "#6750a4")
+else:
+    bg = get_color(colours, ["background", "surface", "surfaceContainerLowest"], "#111015")
+    panel = get_color(colours, ["surfaceContainer", "surfaceContainerHigh", "surfaceVariant"], "#201b24")
+    fg = get_color(colours, ["onSurface", "onBackground"], "#ece6ef")
+    accent = get_color(colours, ["primary"], "#d0bcff")
+
+hover = mix(panel, accent, 0.20)
+active = mix(panel, accent, 0.40)
+border = mix(panel, accent, 0.34)
+
+css = f"""
+* {{
+  transition: none;
+  text-shadow: none;
+  box-shadow: none;
+  outline: none;
+}}
+
+window {{
+  background-color: alpha({bg}, 0.94);
+  color: {fg};
+  border-radius: 18px;
+}}
+
+button, entry, combobox, menubutton {{
+  min-height: 34px;
+  border-radius: 11px;
+  padding: 6px 12px;
+  background-image: none;
+  background-color: alpha({panel}, 0.92);
+  color: {fg};
+  border: 1px solid alpha({border}, 0.80);
+  box-shadow: none;
+}}
+
+button:hover, menubutton:hover {{
+  background-image: none;
+  background-color: {hover};
+  border-color: {accent};
+}}
+
+button:checked, button:active, .highlighted-button {{
+  background-image: none;
+  background-color: {active};
+  color: {fg};
+  border-color: {accent};
+}}
+
+entry {{
+  min-width: 220px;
+  caret-color: {accent};
+  color: {fg};
+}}
+
+label {{
+  color: {fg};
+}}
+
+flowboxchild {{
+  border-radius: 12px;
+  padding: 4px;
+  margin: 4px;
+  background-color: alpha({panel}, 0.36);
+  border: 1px solid alpha({border}, 0.45);
+}}
+
+flowboxchild:hover {{
+  background-color: alpha({hover}, 0.85);
+  border-color: alpha({accent}, 0.75);
+}}
+
+flowboxchild:selected {{
+  background-color: alpha({active}, 0.90);
+  border-color: {accent};
+  border-radius: 12px;
+}}
+
+image {{
+  border-radius: 10px;
+}}
+
+scrollbar {{
+  background: transparent;
+}}
+
+scrollbar slider {{
+  min-width: 8px;
+  min-height: 8px;
+  background-color: alpha({accent}, 0.75);
+  border-radius: 999px;
+}}
+
+tooltip {{
+  background-color: alpha({panel}, 0.96);
+  color: {fg};
+  border: 1px solid alpha({accent}, 0.45);
+  border-radius: 10px;
+}}
+"""
+out.write_text(css)
+PY

@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Caelestia cache maintenance periodically
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=6h
+Persistent=true
+Unit=caelestia-cache-maintain.service
+
+[Install]
+WantedBy=timers.target
