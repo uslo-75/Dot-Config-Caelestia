@@ -67,7 +67,7 @@ Validation locale complète :
 
 ## Compatibilité et sécurité
 
-Les correctifs QML sont basés sur Caelestia Shell 2.1.0 (révision `90a1b466`) et Quickshell 0.3.0. Ils sont testés avant application ; une version incompatible provoque un arrêt sans écraser les fichiers QML.
+Les correctifs QML sont basés sur Caelestia Shell 2.5.0 (tag `v2.5.0`) et Quickshell 0.3.2. Ils sont testés avant application ; une version incompatible provoque un arrêt sans écraser les fichiers QML.
 
 Le dépôt exclut volontairement les configurations `monitor`, caches, logs, historiques du presse-papiers, fichiers d'état contenant des chemins absolus et sauvegardes locales.
 

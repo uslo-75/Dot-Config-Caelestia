@@ -8,7 +8,7 @@ Objectif : reproduire cet environnement sur un PC Arch disposant déjà de Caele
 2. Cloner ce dépôt dans un dossier de travail propre. Pour un dépôt privé, authentifier d'abord `gh` avec `gh auth login`.
 3. Exécuter `./install.sh --dry-run` et lire entièrement le résumé. Ne jamais ajouter manuellement `monitors.conf`, `workspaces.conf` ou `~/.config/caelestia/monitors`.
 4. Exécuter `./scripts/validate.sh`, puis `./install.sh`. Autoriser `sudo pacman` et `yay` uniquement pour les paquets explicitement listés dans `manifest/packages-*.txt`.
-5. Si le patch QML est refusé, ne pas utiliser `patch --force` et ne pas remplacer tout Caelestia. Comparer la version installée avec `patches/caelestia-shell-2.1.0.patch`, porter les mêmes comportements sur la nouvelle version, puis relancer les validations.
+5. Si le patch QML est refusé, ne pas utiliser `patch --force` et ne pas remplacer tout Caelestia. Comparer la version installée avec `patches/caelestia-shell-2.5.0.patch`, porter les mêmes comportements sur la nouvelle version, puis relancer les validations.
 6. Vérifier les commandes de la section suivante avant de déclarer l'installation terminée.
 7. Ne jamais demander, journaliser ou écrire le mot de passe du compte. SDDM n'en a pas besoin pour l'autologin.
 

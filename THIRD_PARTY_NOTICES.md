@@ -2,7 +2,7 @@
 
 ## Caelestia Shell
 
-The files under `patches/` and `overlay/quickshell/` modify or extend Caelestia Shell 2.1.0, revision `90a1b4662f6786e6091ee0b29c7b1431e2ff0bf6`. Caelestia Shell is distributed under GNU GPL v3; a copy is included in `LICENSES/GPL-3.0.txt`.
+The files under `patches/` and `overlay/quickshell/` modify or extend Caelestia Shell 2.5.0 (tag `v2.5.0`). Caelestia Shell is distributed under GNU GPL v3; a copy is included in `LICENSES/GPL-3.0.txt`.
 
 ## rEFInd Gruvbox theme
 

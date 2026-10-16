@@ -1,13 +1,15 @@
-modules/Shortcuts.qml
 modules/background/Background.qml
 modules/background/Wallpaper.qml
 modules/bar/components/Tray.qml
 modules/bar/popouts/Content.qml
+modules/dashboard/Wrapper.qml
 modules/drawers/ContentWindow.qml
 modules/launcher/Content.qml
 modules/launcher/items/WallpaperItem.qml
+modules/launcher/Wrapper.qml
 modules/nexus/common/WallItem.qml
 modules/nexus/pages/wallandstyle/WallpaperCategory.qml
 modules/nexus/pages/wallandstyle/WallpaperSelect.qml
+modules/Shortcuts.qml
 services/Colours.qml
 services/Wallpapers.qml

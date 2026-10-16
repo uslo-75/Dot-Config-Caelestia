@@ -13,14 +13,13 @@
     "persistent": true,
     "popouts": { "tray": true },
     "scrollActions": { "brightness": true },
-    "status": { "showAudio": false, "showKbLayout": false, "showMicrophone": false },
     "tray": { "background": false, "compact": false, "hiddenIcons": [], "recolour": false },
     "workspaces": {
       "activeIndicator": true,
       "activeTrail": false,
       "maxWindowIcons": 6,
       "occupiedBg": false,
-      "perMonitorWorkspaces": true,
+      "perMonitor": true,
       "showWindows": false,
       "showWindowsOnSpecialWorkspaces": true,
       "shown": 8
@@ -37,6 +36,6 @@
     "vimKeybinds": false
   },
   "paths": { "wallpaperDir": "~/Images/wallpapers" },
-  "services": { "defaultPlayer": "YouTube Music", "gpuType": "", "smartScheme": false },
+  "services": { "defaultPlayer": "YouTube Music", "smartScheme": false },
   "sidebar": { "dragThreshold": 80, "enabled": true }
 }

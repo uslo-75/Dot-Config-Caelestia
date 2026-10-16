@@ -35,7 +35,7 @@ printf '[5/7] Patch QML\n'
 tmp="$(mktemp -d)"
 trap 'rm -rf -- "$tmp"' EXIT
 rsync -rlt /etc/xdg/quickshell/caelestia/ "$tmp/"
-patch --dry-run --forward --batch -p1 -d "$tmp" < patches/caelestia-shell-2.1.0.patch >/dev/null
+patch --dry-run --forward --batch -p1 -d "$tmp" < patches/caelestia-shell-2.5.0.patch >/dev/null
 
 printf '[6/7] Portabilité et confidentialité\n'
 source_home='/home/'"uslo"

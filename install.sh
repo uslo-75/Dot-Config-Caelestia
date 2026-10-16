@@ -214,44 +214,43 @@ install_dotfiles() {
 install_qml_overlay() {
     local qml_dir="$HOME/.config/quickshell/caelestia"
     local baseline=/etc/xdg/quickshell/caelestia
-    local patch_file="$REPO_ROOT/patches/caelestia-shell-2.1.0.patch"
+    local patch_file="$REPO_ROOT/patches/caelestia-shell-2.5.0.patch"
+    local overlay_file="$REPO_ROOT/overlay/quickshell/caelestia/services/LauncherState.qml"
     local marker="$STATE_ROOT/qml-patch.sha256"
-    local patch_hash
-    patch_hash="$({ sha256sum "$patch_file" "$REPO_ROOT/overlay/quickshell/caelestia/services/LauncherState.qml"; } | sha256sum | awk '{print $1}')"
+    local shell_version patch_hash
+    [[ -d "$baseline" ]] || { printf 'Base QML Caelestia introuvable: %s\n' "$baseline" >&2; exit 1; }
+    # La version du paquet fait partie de l'empreinte : après une mise à jour de
+    # caelestia-shell, la copie locale est reconstruite au lieu de masquer la nouvelle version.
+    shell_version="$(pacman -Q caelestia-shell 2>/dev/null || pacman -Q caelestia-shell-git 2>/dev/null || true)"
+    patch_hash="$({ sha256sum "$patch_file" "$overlay_file"; printf '%s\n' "$shell_version"; } | sha256sum | awk '{print $1}')"
 
     if [[ -f "$marker" && "$(cat "$marker" 2>/dev/null)" == "$patch_hash" ]] && rg -q 'waypaperCurrentNamePath' "$qml_dir/services/Wallpapers.qml" 2>/dev/null; then
         log "overlay QML déjà appliqué"
-        deploy "$REPO_ROOT/overlay/quickshell/caelestia/services/LauncherState.qml" "$qml_dir/services/LauncherState.qml"
+        deploy "$overlay_file" "$qml_dir/services/LauncherState.qml"
         return 0
     fi
 
-    backup_path "$qml_dir"
-    local patch_target="$qml_dir"
-    if [[ ! -d "$qml_dir" ]]; then
-        [[ -d "$baseline" ]] || { printf 'Base QML Caelestia introuvable: %s\n' "$baseline" >&2; exit 1; }
-        if (( DRY_RUN )); then
-            log "copierait la base QML $baseline vers $qml_dir"
-            patch_target="$baseline"
-        else
-            install -d -m 0755 "$qml_dir"
-            rsync -rlt "$baseline/" "$qml_dir/"
-        fi
+    # Le patch est toujours testé sur une copie propre du paquet installé.
+    local tmp_qml
+    tmp_qml="$(mktemp -d)"
+    rsync -rlt "$baseline/" "$tmp_qml/"
+    if ! patch --forward --batch -p1 -d "$tmp_qml" < "$patch_file" >/tmp/caelestia-qml-patch.log 2>&1; then
+        rm -rf -- "$tmp_qml"
+        printf 'Patch QML incompatible avec %s ; aucun fichier QML n’a été modifié. Détails: /tmp/caelestia-qml-patch.log\n' "${shell_version:-caelestia-shell}" >&2
+        exit 1
     fi
+    install -m 0644 "$overlay_file" "$tmp_qml/services/LauncherState.qml"
 
-    if rg -q 'waypaperCurrentNamePath' "$patch_target/services/Wallpapers.qml" 2>/dev/null; then
-        log "comportement QML présent ; patch textuel non rejoué"
+    backup_path "$qml_dir"
+    if (( DRY_RUN )); then
+        log "reconstruirait $qml_dir depuis $baseline (${shell_version:-version inconnue}) + patch"
     else
-        if ! patch --dry-run --forward --batch -p1 -d "$patch_target" < "$patch_file" >/tmp/caelestia-qml-patch.log 2>&1; then
-            printf 'Patch QML incompatible ; aucun fichier QML n’a été modifié. Détails: /tmp/caelestia-qml-patch.log\n' >&2
-            exit 1
-        fi
-        run patch --forward --batch -p1 -d "$qml_dir" -i "$patch_file"
-    fi
-    deploy "$REPO_ROOT/overlay/quickshell/caelestia/services/LauncherState.qml" "$qml_dir/services/LauncherState.qml"
-    if (( ! DRY_RUN )); then
+        install -d -m 0755 "$qml_dir"
+        rsync -rlt --delete "$tmp_qml/" "$qml_dir/"
         install -d -m 0700 "$STATE_ROOT"
         printf '%s\n' "$patch_hash" > "$marker"
     fi
+    rm -rf -- "$tmp_qml"
 }
 
 enable_services() {
