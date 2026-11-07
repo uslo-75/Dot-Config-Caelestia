@@ -12,7 +12,7 @@ python3 - <<'PY'
 import ast
 from pathlib import Path
 
-for name in ("bin/clipse-gui-fixed", "bin/clipse-theme-sync"):
+for name in ("bin/clipse-gui-fixed", "bin/clipse-theme-sync", "bin/protonmail-tray"):
     ast.parse(Path(name).read_text(encoding="utf-8"), filename=name)
 PY
 
@@ -35,7 +35,7 @@ printf '[5/7] Patch QML\n'
 tmp="$(mktemp -d)"
 trap 'rm -rf -- "$tmp"' EXIT
 rsync -rlt /etc/xdg/quickshell/caelestia/ "$tmp/"
-patch --dry-run --forward --batch -p1 -d "$tmp" < patches/caelestia-shell-2.5.0.patch >/dev/null
+patch --dry-run --forward --batch --fuzz=0 -p1 -d "$tmp" < patches/caelestia-shell-2.5.0.patch >/dev/null
 
 printf '[6/7] Portabilité et confidentialité\n'
 source_home='/home/'"uslo"

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -u
+set -Eeuo pipefail
 
 force=0
 nokill=0
@@ -14,8 +14,8 @@ done
 apply_lock="${XDG_RUNTIME_DIR:-/tmp}/caelestia-waypaper-apply.lock"
 open_lock="${XDG_RUNTIME_DIR:-/tmp}/waypaper-open.lock"
 
-# Si un changement est en cours, ne pas ouvrir Waypaper.
-if [[ "$force" = "0" ]]; then
+# Ne pas ouvrir Waypaper pendant l’application d’un fond, sauf demande explicite.
+if [[ "$force" == '0' ]]; then
     (
         flock -n 8 || exit 42
     ) 8>"$apply_lock" || exit 0
@@ -24,12 +24,21 @@ fi
 (
     flock -w 1 9 || exit 0
 
-    if [[ "$nokill" = "0" ]]; then
-        if pgrep -x waypaper >/dev/null 2>&1; then
-            pkill -x waypaper >/dev/null 2>&1 || true
+    if pgrep -x waypaper >/dev/null 2>&1; then
+        if [[ "$nokill" == '1' ]]; then
             exit 0
         fi
+
+        pkill -x waypaper >/dev/null 2>&1 || true
+        for _ in {1..20}; do
+            pgrep -x waypaper >/dev/null 2>&1 || break
+            sleep 0.05
+        done
+
+        # Super+Alt+X agit comme un vrai toggle : un second appui ferme l’UI.
+        exit 0
     fi
 
+    # Fermer explicitement le descripteur 9 : sinon Waypaper garde le flock.
     WAYPAPER_UI=1 setsid -f waypaper >/tmp/waypaper.log 2>&1 9>&-
 ) 9>"$open_lock"

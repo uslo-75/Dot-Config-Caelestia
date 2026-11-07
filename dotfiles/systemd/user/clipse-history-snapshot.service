@@ -1,0 +1,8 @@
+[Unit]
+Description=Snapshot the Clipse clipboard history
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/clipse-history-snapshot --archive
+Nice=10
+IOSchedulingClass=idle

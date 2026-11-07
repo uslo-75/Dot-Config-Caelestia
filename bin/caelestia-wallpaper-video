@@ -1,0 +1,191 @@
+#!/usr/bin/env bash
+# Gestion des wallpapers vidéo :
+#   playable <video>   chemin à donner à mpvpaper (copie à la résolution écran ou original)
+#   cover <video>      première image de la vidéo (pour les fondus du shell)
+#   build [video...]   prépare copies + couvertures (toutes les vidéos si aucun argument)
+#   quality [auto|source]  lit ou change la qualité
+#
+# Qualité "auto"   : copie redimensionnée à la hauteur du plus grand écran ; si l'écran
+#                    est aussi grand que la vidéo, l'original est utilisé (écran 4K -> 4K).
+# Qualité "source" : toujours l'original.
+# Les fichiers d'origine ne sont jamais modifiés.
+set -u
+
+cache_root="${XDG_CACHE_HOME:-$HOME/.cache}/caelestia/wallpaper-video"
+quality_file="$HOME/.config/caelestia/wallpaper-video-quality"
+lock_file="${XDG_RUNTIME_DIR:-/tmp}/caelestia-wallpaper-video.lock"
+log="/tmp/caelestia-wallpaper-video.log"
+
+quality() {
+    local q
+    q="$(cat "$quality_file" 2>/dev/null || true)"
+    [[ "$q" == "source" ]] && echo source || echo auto
+}
+
+target_height() {
+    local h
+    h="$(hyprctl monitors -j 2>/dev/null | jq -r '[.[] | if (.transform % 2) == 1 then .width else .height end] | max // empty' 2>/dev/null)"
+    [[ "$h" =~ ^[0-9]+$ ]] && echo "$h" || echo 1080
+}
+
+key_for() {
+    printf '%s' "$1" | sha1sum | cut -c1-20
+}
+
+source_height() {
+    local src="$1" meta h
+    meta="$cache_root/meta/$(key_for "$src").h"
+    if [[ -s "$meta" && "$meta" -nt "$src" ]]; then
+        cat "$meta"
+        return
+    fi
+    h="$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=p=0 "$src" 2>/dev/null | head -n1)"
+    [[ "$h" =~ ^[0-9]+$ ]] || return 0
+    mkdir -p "$cache_root/meta"
+    printf '%s\n' "$h" > "$meta"
+    echo "$h"
+}
+
+optimized_path() {
+    printf '%s/%sp/%s.mp4\n' "$cache_root" "$2" "$(key_for "$1")"
+}
+
+cover_path() {
+    printf '%s/covers/%sp/%s.jpg\n' "$cache_root" "$2" "$(key_for "$1")"
+}
+
+needs_downscale() {
+    local src="$1" target="$2" h
+    h="$(source_height "$src")"
+    [[ -n "$h" ]] && (( h > target ))
+}
+
+encode() {
+    local src="$1" target="$2" out tmp
+    out="$(optimized_path "$src" "$target")"
+    [[ -s "$out" && "$out" -nt "$src" ]] && return 0
+    mkdir -p "$(dirname -- "$out")"
+    tmp="${out%.mp4}.tmp.mp4"
+
+    printf '[%s] encode %sp %s\n' "$(date '+%F %T')" "$target" "$src" >>"$log"
+    # GPU NVIDIA d'abord, puis repli logiciel.
+    if ! nice -n 15 ffmpeg -nostdin -hide_banner -loglevel error -y \
+            -hwaccel cuda -hwaccel_output_format cuda -i "$src" \
+            -vf "scale_cuda=-2:${target}:interp_algo=lanczos" \
+            -c:v h264_nvenc -preset p6 -tune hq -rc vbr -cq 19 -b:v 0 -maxrate 20M -bufsize 40M -profile:v high \
+            -an -movflags +faststart "$tmp" >>"$log" 2>&1; then
+        nice -n 15 ffmpeg -nostdin -hide_banner -loglevel error -y -i "$src" \
+            -vf "scale=-2:${target}:flags=lanczos" -c:v libx264 -preset medium -crf 18 -pix_fmt yuv420p \
+            -an -movflags +faststart "$tmp" >>"$log" 2>&1 || { rm -f -- "$tmp"; return 1; }
+    fi
+    mv -f -- "$tmp" "$out"
+}
+
+make_cover() {
+    local src="$1" target="$2" out tmp
+    out="$(cover_path "$src" "$target")"
+    if [[ ! -s "$out" || ! "$out" -nt "$src" ]]; then
+        mkdir -p "$(dirname -- "$out")"
+        tmp="${out%.jpg}.tmp.jpg"
+        timeout 8 ffmpeg -nostdin -hide_banner -loglevel error -y -i "$src" -frames:v 1 \
+            -vf "scale=-2:'min(${target},ih)':flags=lanczos" -q:v 2 "$tmp" >/dev/null 2>&1 \
+            && mv -f -- "$tmp" "$out"
+        rm -f -- "$tmp"
+    fi
+    [[ -s "$out" ]] && printf '%s\n' "$out"
+}
+
+build_one() {
+    local src="$1" target="$2"
+    make_cover "$src" "$target" >/dev/null
+    if needs_downscale "$src" "$target"; then
+        encode "$src" "$target"
+    fi
+}
+
+wallpaper_dir() {
+    local dir
+    dir="$(jq -r '.paths.wallpaperDir // empty' "$HOME/.config/caelestia/shell.json" 2>/dev/null)"
+    dir="${dir/#\~/$HOME}"
+    echo "${dir:-$HOME/Images/wallpapers}"
+}
+
+list_videos() {
+    find "$(wallpaper_dir)" -type f \( -iname '*.mp4' -o -iname '*.webm' -o -iname '*.mkv' \
+        -o -iname '*.mov' -o -iname '*.avi' -o -iname '*.m4v' \) -print0 2>/dev/null
+}
+
+build() {
+    exec 9>"$lock_file"
+    flock -n 9 || exit 0
+    local target src
+    target="$(target_height)"
+    if (( $# > 0 )); then
+        for src in "$@"; do [[ -f "$src" ]] && build_one "$src" "$target"; done
+    else
+        local -A keep=()
+        while IFS= read -r -d '' src; do
+            keep[$(key_for "$src")]=1
+            build_one "$src" "$target"
+        done < <(list_videos)
+        # Supprime les copies dont la vidéo d'origine a disparu.
+        local f k
+        while IFS= read -r -d '' f; do
+            k="$(basename -- "$f")"
+            k="${k%%.*}"
+            [[ -n "${keep[$k]:-}" ]] || rm -f -- "$f"
+        done < <(find "$cache_root" -type f \( -name '*.mp4' -o -name '*.jpg' -o -name '*.h' \) -print0 2>/dev/null)
+        # Nettoie les copies dont l'original a disparu ou d'une ancienne résolution.
+        find "$cache_root" -mindepth 1 -maxdepth 1 -type d -name '*p' ! -name "${target}p" -exec rm -rf -- {} + 2>/dev/null
+    fi
+}
+
+build_async() {
+    (setsid "$0" build "$@" >/dev/null 2>&1 &)
+}
+
+case "${1:-}" in
+    playable)
+        src="${2:-}"
+        if [[ "$(quality)" == "source" || ! -f "$src" ]]; then
+            printf '%s\n' "$src"
+            exit 0
+        fi
+        target="$(target_height)"
+        if ! needs_downscale "$src" "$target"; then
+            printf '%s\n' "$src"
+            exit 0
+        fi
+        out="$(optimized_path "$src" "$target")"
+        if [[ -s "$out" && "$out" -nt "$src" ]]; then
+            printf '%s\n' "$out"
+        else
+            # Copie pas encore prête : original en attendant, préparation en arrière-plan.
+            build_async "$src"
+            printf '%s\n' "$src"
+        fi
+        ;;
+    cover)
+        [[ -f "${2:-}" ]] && make_cover "$2" "$(target_height)"
+        ;;
+    build)
+        shift
+        build "$@"
+        ;;
+    build-async)
+        shift
+        build_async "$@"
+        ;;
+    quality)
+        if [[ -n "${2:-}" ]]; then
+            [[ "$2" == "source" || "$2" == "auto" ]] || { echo "usage: quality auto|source" >&2; exit 1; }
+            mkdir -p "$(dirname -- "$quality_file")"
+            printf '%s\n' "$2" > "$quality_file"
+        fi
+        quality
+        ;;
+    *)
+        echo "usage: $(basename "$0") playable|cover|build|build-async|quality ..." >&2
+        exit 1
+        ;;
+esac

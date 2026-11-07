@@ -1,0 +1,187 @@
+#!/usr/bin/env python3
+import gi
+import os
+import glob
+import subprocess
+
+gi.require_version("Gtk", "3.0")
+from gi.repository import GLib, Gtk
+
+try:
+    gi.require_version("AyatanaAppIndicator3", "0.1")
+    from gi.repository import AyatanaAppIndicator3 as AppIndicator3
+except Exception:
+    gi.require_version("AppIndicator3", "0.1")
+    from gi.repository import AppIndicator3
+
+
+HOME = os.path.expanduser("~")
+
+
+def run(cmd):
+    subprocess.Popen(
+        cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+
+def find_desktop_file():
+    paths = glob.glob("/usr/share/applications/*.desktop")
+    paths += glob.glob(os.path.expanduser("~/.local/share/applications/*.desktop"))
+
+    best = None
+
+    for path in paths:
+        name = os.path.basename(path).lower()
+
+        try:
+            content = open(path, "r", encoding="utf-8", errors="ignore").read()
+        except Exception:
+            continue
+
+        low = content.lower()
+
+        if "vpn" in low or "bridge" in low:
+            continue
+
+        score = 0
+
+        if "proton" in name and "mail" in name:
+            score += 20
+        if "name=proton mail" in low:
+            score += 30
+        if "proton mail" in low:
+            score += 15
+        if "protonmail" in low or "proton-mail" in low:
+            score += 10
+
+        if score > 0 and (best is None or score > best[0]):
+            best = (score, path)
+
+    return best[1] if best else None
+
+
+def icon_from_desktop():
+    desktop = find_desktop_file()
+
+    if not desktop:
+        return None
+
+    try:
+        for line in open(desktop, "r", encoding="utf-8", errors="ignore"):
+            if line.startswith("Icon="):
+                return line.split("=", 1)[1].strip()
+    except Exception:
+        return None
+
+    return None
+
+
+def resolve_icon(icon):
+    if not icon:
+        return None
+
+    if os.path.isabs(icon) and os.path.exists(icon):
+        return icon
+
+    for base in [
+        os.path.expanduser("~/.local/share/icons"),
+        "/usr/share/icons",
+        "/usr/share/pixmaps",
+    ]:
+        for ext in ["svg", "png", "xpm"]:
+            found = glob.glob(os.path.join(base, "**", f"{icon}.{ext}"), recursive=True)
+            if found:
+                return found[0]
+
+    return icon
+
+
+def proton_icon():
+    icon = resolve_icon(icon_from_desktop())
+
+    if icon:
+        return icon
+
+    for name in ["proton-mail", "protonmail", "proton-mail-desktop", "mail-unread-symbolic"]:
+        icon = resolve_icon(name)
+        if icon:
+            return icon
+
+    return "mail-unread-symbolic"
+
+
+def open_focus(_=None):
+    run([os.path.join(HOME, ".local/bin/protonmail-focus-or-open")])
+
+
+def close_mail(_=None):
+    run([os.path.join(HOME, ".local/bin/protonmail-close")])
+
+
+def restart_mail(_=None):
+    close_mail()
+    GLib.timeout_add(1500, lambda: (open_focus(), False)[1])
+
+
+def proton_mail_running():
+    # Proton Mail (Electron) : /usr/lib/electronXX/electron /usr/share/proton-mail/app.asar
+    for pid in os.listdir("/proc"):
+        if not pid.isdigit():
+            continue
+        try:
+            with open(f"/proc/{pid}/cmdline", "rb") as fh:
+                cmdline = fh.read()
+        except OSError:
+            continue
+        if b"proton-mail/app.asar" in cmdline or cmdline.startswith(b"/usr/bin/proton-mail"):
+            return True
+    return False
+
+
+def sync_status():
+    # PASSIVE = icone masquee par le shell ; ACTIVE seulement quand l'app tourne.
+    status = (
+        AppIndicator3.IndicatorStatus.ACTIVE
+        if proton_mail_running()
+        else AppIndicator3.IndicatorStatus.PASSIVE
+    )
+    if indicator.get_status() != status:
+        indicator.set_status(status)
+    return True
+
+
+indicator = AppIndicator3.Indicator.new(
+    "protonmail-tray",
+    "mail-unread-symbolic",
+    AppIndicator3.IndicatorCategory.APPLICATION_STATUS,
+)
+
+icon = proton_icon()
+
+if os.path.isabs(icon) and os.path.exists(icon):
+    indicator.set_icon_theme_path(os.path.dirname(icon))
+    indicator.set_icon_full(os.path.splitext(os.path.basename(icon))[0], "Proton Mail")
+else:
+    indicator.set_icon_full(icon, "Proton Mail")
+
+sync_status()
+GLib.timeout_add_seconds(2, sync_status)
+
+menu = Gtk.Menu()
+
+for label, cb in [
+    ("Ouvrir / focus Proton Mail", open_focus),
+    ("Relancer Proton Mail", restart_mail),
+    ("Fermer Proton Mail", close_mail),
+]:
+    item = Gtk.MenuItem(label=label)
+    item.connect("activate", cb)
+    menu.append(item)
+
+menu.show_all()
+indicator.set_menu(menu)
+
+Gtk.main()

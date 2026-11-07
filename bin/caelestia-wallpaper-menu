@@ -1,13 +1,29 @@
 #!/usr/bin/env bash
-set -u
+set -Eeuo pipefail
 
-if quickshell ipc -c caelestia call launcher openWallpapers >/tmp/caelestia-wallpaper-menu.log 2>&1; then
+log="/tmp/caelestia-wallpaper-menu.log"
+
+# The QML overlay exposes a direct launcher IPC. It avoids focus races and the
+# synthetic keyboard input that made this shortcut unreliable after upgrades.
+if qs ipc -c caelestia call launcher openWallpapers >"$log" 2>&1; then
+    exit 0
+fi
+if caelestia shell launcher openWallpapers >>"$log" 2>&1; then
     exit 0
 fi
 
-if [[ "$(quickshell ipc -c caelestia call drawers isOpen launcher 2>/dev/null || echo 0)" != "1" ]]; then
-    quickshell ipc -c caelestia call drawers toggle launcher >/dev/null 2>&1 || true
+# Compatibility fallback while the shell is being restarted or if the overlay
+# has not been loaded yet.
+if [[ "$(caelestia shell drawers isOpen launcher 2>/dev/null || true)" != "1" ]]; then
+    caelestia shell drawers toggle launcher >>"$log" 2>&1 || exit 1
+
+    for _ in {1..20}; do
+        [[ "$(caelestia shell drawers isOpen launcher 2>/dev/null)" == "1" ]] && break
+        sleep 0.01
+    done
 fi
 
-sleep 0.25
-wtype '>wallpaper ' >/dev/null 2>&1 || true
+sleep 0.05
+wtype -M ctrl a -m ctrl >/dev/null 2>&1 || true
+wtype -P BackSpace -p BackSpace >/dev/null 2>&1 || true
+wtype '>wallpaper ' >>"$log" 2>&1

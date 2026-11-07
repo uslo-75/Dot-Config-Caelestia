@@ -1,0 +1,13 @@
+[Unit]
+Description=Serialized Clipse clipboard listeners with history recovery
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+ExecStart=%h/.local/bin/clipse-listen-safe
+Restart=on-failure
+RestartSec=1
+TimeoutStopSec=5
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,11 @@
+[Unit]
+Description=Keep rolling Clipse clipboard history snapshots
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=1h
+Persistent=true
+Unit=clipse-history-snapshot.service
+
+[Install]
+WantedBy=timers.target

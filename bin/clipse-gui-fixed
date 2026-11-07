@@ -1,5 +1,6 @@
 #!/usr/bin/python
 import logging
+import fcntl
 import os
 import subprocess
 import sys
@@ -28,6 +29,7 @@ gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk
 
 from clipse_gui.controller_mixins import list_view_mixin
+from clipse_gui.data_manager import DataManager
 
 
 log = logging.getLogger(__name__)
@@ -64,6 +66,29 @@ def _update_row_image_widget(self, image_container, placeholder, pixbuf, error_m
 
 
 list_view_mixin.ListViewMixin._update_row_image_widget = _update_row_image_widget
+
+
+_original_save_thread_target = DataManager._save_thread_target
+
+
+def _locked_save_thread_target(self, items_to_save, callback_on_error):
+    runtime_dir = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp"))
+    lock_path = runtime_dir / "clipse-history.lock"
+    snapshot_cmd = Path.home() / ".local/bin/clipse-history-snapshot"
+
+    with lock_path.open("w", encoding="utf-8") as lock_handle:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+        if snapshot_cmd.exists():
+            subprocess.run(
+                [str(snapshot_cmd), "--last-good", "--lock-held"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+        return _original_save_thread_target(self, items_to_save, callback_on_error)
+
+
+DataManager._save_thread_target = _locked_save_thread_target
 
 from clipse_gui.cli import main  # noqa: E402
 

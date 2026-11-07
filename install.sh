@@ -75,7 +75,7 @@ require_caelestia() {
     for package in caelestia-shell caelestia-cli hyprland; do
         pacman -Q "$package" >/dev/null 2>&1 || missing+=("$package")
     done
-    if ! pacman -Qq | rg -qx 'quickshell(-git)?'; then
+    if ! pacman -Q quickshell >/dev/null 2>&1 && ! pacman -Q quickshell-git >/dev/null 2>&1; then
         missing+=("quickshell ou quickshell-git")
     fi
     if ((${#missing[@]})); then
@@ -176,19 +176,35 @@ PY
     fi
 }
 
+deploy_if_missing() {
+    local source="$1" destination="$2" mode="${3:-0644}"
+    if [[ -e "$destination" || -L "$destination" ]]; then
+        log "réglage existant conservé: $destination"
+        return 0
+    fi
+    deploy "$source" "$destination" "$mode"
+}
+
 install_dotfiles() {
     local source name
     log "installation des réglages utilisateur"
     for source in "$REPO_ROOT"/dotfiles/caelestia/*; do
         name="$(basename -- "$source")"
-        deploy "$source" "$HOME/.config/caelestia/$name"
+        case "$name" in
+            cli.json|shell.json|theme-mode|theme-variant)
+                deploy_if_missing "$source" "$HOME/.config/caelestia/$name"
+                ;;
+            *)
+                deploy "$source" "$HOME/.config/caelestia/$name"
+                ;;
+        esac
     done
     for source in "$REPO_ROOT"/dotfiles/waypaper/*; do
         name="$(basename -- "$source")"
-        deploy "$source" "$HOME/.config/waypaper/$name"
+        deploy_if_missing "$source" "$HOME/.config/waypaper/$name"
     done
-    deploy "$REPO_ROOT/dotfiles/clipse/config.json" "$HOME/.config/clipse/config.json"
-    deploy "$REPO_ROOT/dotfiles/clipse-gui/settings.ini" "$HOME/.config/clipse-gui/settings.ini"
+    deploy_if_missing "$REPO_ROOT/dotfiles/clipse/config.json" "$HOME/.config/clipse/config.json"
+    deploy_if_missing "$REPO_ROOT/dotfiles/clipse-gui/settings.ini" "$HOME/.config/clipse-gui/settings.ini"
 
     for source in "$REPO_ROOT"/bin/*; do
         [[ -f "$source" ]] || continue
@@ -234,7 +250,7 @@ install_qml_overlay() {
     local tmp_qml
     tmp_qml="$(mktemp -d)"
     rsync -rlt "$baseline/" "$tmp_qml/"
-    if ! patch --forward --batch -p1 -d "$tmp_qml" < "$patch_file" >/tmp/caelestia-qml-patch.log 2>&1; then
+    if ! patch --forward --batch --fuzz=0 -p1 -d "$tmp_qml" < "$patch_file" >/tmp/caelestia-qml-patch.log 2>&1; then
         rm -rf -- "$tmp_qml"
         printf 'Patch QML incompatible avec %s ; aucun fichier QML n’a été modifié. Détails: /tmp/caelestia-qml-patch.log\n' "${shell_version:-caelestia-shell}" >&2
         exit 1
@@ -258,8 +274,11 @@ enable_services() {
         caelestia-cache-maintain.timer
         caelestia-wallpaper-thumbs-watch.service
         mpvpaper-guard.service
+        clipse-listen-safe.service
         clipse-maintain.timer
+        clipse-history-snapshot.timer
         clipse-theme-watch.service
+        protonmail-tray.service
     ) unit
     (( INSTALL_SERVICES )) || { log "activation systemd utilisateur ignorée"; return 0; }
     if (( ! DRY_RUN )); then

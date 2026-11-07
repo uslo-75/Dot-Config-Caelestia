@@ -6,7 +6,7 @@
     "spacing": { "scale": 1 },
     "transparency": { "base": 0.92, "enabled": true, "layers": 0.55 }
   },
-  "background": { "enabled": true, "wallpaperEnabled": false },
+  "background": { "enabled": true, "wallpaperEnabled": true },
   "bar": {
     "activeWindow": { "compact": true, "inverted": false, "showOnHover": true },
     "clock": { "background": false, "showDate": false, "showIcon": true },

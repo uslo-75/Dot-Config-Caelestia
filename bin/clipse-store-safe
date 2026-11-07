@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+history="$HOME/.config/clipse/clipboard_history.json"
+state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/clipse/history-backups"
+last_good="$state_dir/clipboard_history.last-good.json"
+lock="${XDG_RUNTIME_DIR:-/tmp}/clipse-history.lock"
+log="${XDG_STATE_HOME:-$HOME/.local/state}/clipse/store-safe.log"
+
+mkdir -p "$(dirname -- "$log")"
+exec 9>"$lock"
+flock -w 10 9 || exit 1
+
+before=0
+if [[ -s "$history" ]] && jq -e '.clipboardHistory | type == "array"' "$history" >/dev/null 2>&1; then
+    before="$(jq -r '.clipboardHistory | length' "$history")"
+    "$HOME/.local/bin/clipse-history-snapshot" --last-good --lock-held >/dev/null 2>&1 || true
+fi
+
+store_rc=0
+/usr/bin/clipse --wl-store || store_rc=$?
+
+valid=0
+after=0
+if [[ -s "$history" ]] && jq -e '.clipboardHistory | type == "array"' "$history" >/dev/null 2>&1; then
+    valid=1
+    after="$(jq -r '.clipboardHistory | length' "$history")"
+fi
+
+if [[ "$valid" == "0" || ( "$before" -gt 5 && "$after" -lt $((before - 1)) ) ]]; then
+    if [[ -s "$last_good" ]] && jq -e '.clipboardHistory | type == "array"' "$last_good" >/dev/null 2>&1; then
+        repair="$(mktemp "$HOME/.config/clipse/clipboard_history.repair.XXXXXX")"
+        if [[ "$valid" == "1" ]]; then
+            max_history="$(jq -r '.maxHistory // 300' "$HOME/.config/clipse/config.json" 2>/dev/null || echo 300)"
+            [[ "$max_history" =~ ^[0-9]+$ ]] || max_history=300
+            jq -s --argjson max "$max_history" '{clipboardHistory: ((.[1].clipboardHistory + .[0].clipboardHistory) | unique_by(.recorded) | sort_by(.recorded) | reverse | .[:$max])}' "$last_good" "$history" >"$repair"
+        else
+            cp -- "$last_good" "$repair"
+        fi
+
+        if jq -e '.clipboardHistory | type == "array"' "$repair" >/dev/null 2>&1; then
+            chmod 600 "$repair"
+            mv -f -- "$repair" "$history"
+            repaired="$(jq -r '.clipboardHistory | length' "$history")"
+            printf '[%s] recovered suspicious history before=%s after=%s repaired=%s\n' "$(date '+%F %T')" "$before" "$after" "$repaired" >>"$log"
+        else
+            rm -f -- "$repair"
+        fi
+    fi
+fi
+
+exit "$store_rc"

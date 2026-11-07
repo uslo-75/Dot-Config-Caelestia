@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+set -u
+
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+
+if [[ -z "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]]; then
+    sig="$(
+        find "$XDG_RUNTIME_DIR/hypr" -mindepth 1 -maxdepth 1 -type d 2>/dev/null \
+        | while read -r d; do
+            test -S "$d/.socket.sock" && echo "$d"
+        done \
+        | sort -r \
+        | head -n 1
+    )"
+
+    [[ -n "$sig" ]] && export HYPRLAND_INSTANCE_SIGNATURE="$(basename "$sig")"
+fi
+
+launch_proton_mail() {
+    for cmd in proton-mail proton-mail-desktop protonmail-desktop protonmail; do
+        if command -v "$cmd" >/dev/null 2>&1; then
+            "$cmd" >/dev/null 2>&1 &
+            exit 0
+        fi
+    done
+
+    id="$(
+        find /usr/share/applications "$HOME/.local/share/applications" \
+            -maxdepth 1 -type f -iname '*.desktop' 2>/dev/null \
+        | while read -r f; do
+            base="$(basename "$f")"
+            content="$(cat "$f" 2>/dev/null || true)"
+            printf '%s\n%s\n' "$base" "$content" | grep -Eiq 'proton.*mail|protonmail|proton-mail' && {
+                basename "$f" .desktop
+                break
+            }
+        done
+    )"
+
+    [[ -n "$id" ]] && gtk-launch "$id" >/dev/null 2>&1 &
+    exit 0
+}
+
+clients="$(hyprctl clients -j 2>/dev/null || echo '[]')"
+
+info="$(
+    printf '%s' "$clients" | jq -r '
+        .[]
+        | select(
+            ((.class // "") == "Proton Mail")
+            or ((.title // "") == "Proton Mail")
+            or (
+                (((.class // "") + " " + (.initialClass // "") + " " + (.title // "") + " " + (.initialTitle // "")) | ascii_downcase)
+                | test("proton.*mail|protonmail|proton-mail|mail\\.proton")
+            )
+        )
+        | [.address, (.workspace.id|tostring), (.monitor|tostring)]
+        | @tsv
+    ' | head -n 1
+)"
+
+[[ -z "$info" ]] && launch_proton_mail
+
+addr="$(printf '%s' "$info" | awk -F '\t' '{print $1}')"
+ws="$(printf '%s' "$info" | awk -F '\t' '{print $2}')"
+monid="$(printf '%s' "$info" | awk -F '\t' '{print $3}')"
+
+mon="$(
+    hyprctl monitors -j 2>/dev/null \
+    | jq -r --argjson id "$monid" '.[] | select(.id == $id) | .name' \
+    | head -n 1
+)"
+
+focus_it() {
+    if [[ -n "$mon" && "$mon" != "null" ]]; then
+        hyprctl eval "hl.dispatch(hl.dsp.focus({ monitor = \"$mon\" }))" >/dev/null 2>&1 || true
+    fi
+
+    if [[ -n "$ws" && "$ws" != "null" ]]; then
+        hyprctl eval "hl.dispatch(hl.dsp.focus({ workspace = \"$ws\" }))" >/dev/null 2>&1 || true
+    fi
+
+    sleep 0.05
+
+    hyprctl eval "hl.dispatch(hl.dsp.focus({ window = \"address:$addr\" }))" >/dev/null 2>&1 || true
+    hyprctl eval "hl.dispatch(hl.dsp.window.alter_zorder({ mode = \"top\", window = \"address:$addr\" }))" >/dev/null 2>&1 || true
+}
+
+focus_it
+
+# Le menu tray peut reprendre le focus après le clic, donc on répète.
+(
+    sleep 0.20
+    focus_it
+) >/dev/null 2>&1 &

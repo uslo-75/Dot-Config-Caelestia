@@ -15,8 +15,11 @@ units=(
     caelestia-cache-maintain.timer
     caelestia-wallpaper-thumbs-watch.service
     mpvpaper-guard.service
+    clipse-listen-safe.service
     clipse-maintain.timer
+    clipse-history-snapshot.timer
     clipse-theme-watch.service
+    protonmail-tray.service
 )
 systemctl --user disable --now "${units[@]}" >/dev/null 2>&1 || true
 

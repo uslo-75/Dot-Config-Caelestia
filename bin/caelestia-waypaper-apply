@@ -151,10 +151,8 @@ case "${wp,,}" in
 esac
 
 set_caelestia_wallpaper_layer() {
+    # Toujours actif : le shell masque lui-même sa couche image quand une vidéo est le fond.
     local enabled=true
-    if [[ "$animated_wp" = "1" ]]; then
-        enabled=false
-    fi
 
     local shell_config="$HOME/.config/caelestia/shell.json"
     [[ -f "$shell_config" ]] || printf '{}\n' > "$shell_config"

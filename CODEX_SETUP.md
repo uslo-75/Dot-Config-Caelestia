@@ -19,8 +19,11 @@ systemctl --user is-enabled \
   caelestia-cache-maintain.timer \
   caelestia-wallpaper-thumbs-watch.service \
   mpvpaper-guard.service \
+  clipse-listen-safe.service \
   clipse-maintain.timer \
-  clipse-theme-watch.service
+  clipse-history-snapshot.timer \
+  clipse-theme-watch.service \
+  protonmail-tray.service
 
 ~/.local/bin/cg-open --status
 test -d ~/Images/wallpapers
@@ -33,9 +36,9 @@ sudo rg -n 'User=uslo|Session=hyprland' /etc/sddm.conf.d/99-caelestia-autologin.
 Valider ensuite manuellement :
 
 - `Super+V` ouvre Clipse GUI et le referme au second appui ;
-- `Super+Alt+V` conserve le presse-papiers Caelestia ;
+- `Super+Alt+V` ouvre aussi Clipse GUI ;
 - `Super+Alt+X` ouvre Waypaper ;
-- une image et une vidéo peuvent être sélectionnées sans écran noir ;
+- une image et une vidéo peuvent être sélectionnées sans écran noir, avec un fondu dans les deux sens ;
 - la miniature vidéo et le thème dynamique suivent le fond choisi ;
 - les workspaces AZERTY fonctionnent ;
 - la disposition, la fréquence et l'échelle des écrans n'ont pas changé.

@@ -6,6 +6,7 @@ fuzzel
 imagemagick
 inotify-tools
 jq
+libayatana-appindicator
 libnotify
 libva-utils
 mesa-utils
@@ -15,6 +16,7 @@ python
 python-gobject
 ripgrep
 rsync
+socat
 util-linux
 vulkan-tools
 wl-clipboard

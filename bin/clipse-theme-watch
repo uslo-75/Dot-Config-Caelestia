@@ -19,5 +19,8 @@ while true; do
         sleep 3
     fi
 
+    # Regroupe les écritures successives mode/variante/scheme en une seule
+    # synchronisation afin d’éviter plusieurs relances visuelles de la GUI.
+    sleep 0.15
     "$sync_cmd" --refresh-running >>/tmp/clipse-theme-sync.log 2>&1 || true
 done

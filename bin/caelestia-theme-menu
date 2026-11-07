@@ -9,6 +9,12 @@ override_file="$HOME/.config/caelestia/theme-override-wallpaper"
 current_mode="$(cat "$mode_file" 2>/dev/null || echo auto)"
 current_variant="$(cat "$variant_file" 2>/dev/null || echo auto)"
 changed=0
+video_helper="$HOME/.local/bin/caelestia-wallpaper-video"
+video_quality="$("$video_helper" quality 2>/dev/null || echo auto)"
+case "$video_quality" in
+    source) video_quality_label="source (4K)" ;;
+    *) video_quality_label="auto (résolution écran)" ;;
+esac
 
 write_if_changed() {
     local file="$1"
@@ -47,12 +53,14 @@ Variant: fruitsalad
 Variant: monochrome
 Variant: rainbow
 Variant: content
+Vidéo: auto (résolution écran)
+Vidéo: qualité source (4K)
 Reapply current wallpaper
-Current: $current_mode / $current_variant
+Current: $current_mode / $current_variant — vidéo $video_quality_label
 MENU
 )
 
-choice="$(printf "%s\n" "$items" | fuzzel --dmenu --prompt "Theme current wallpaper > " --width 42 2>/dev/null || true)"
+choice="$(printf "%s\n" "$items" | fuzzel --dmenu --prompt "Theme current wallpaper > " --width 56 2>/dev/null || true)"
 
 case "$choice" in
     "Mode: auto")
@@ -69,6 +77,19 @@ case "$choice" in
         ;;
     Variant:*)
         write_if_changed "$variant_file" "${choice#Variant: }"
+        ;;
+    "Vidéo: auto (résolution écran)"|"Vidéo: qualité source (4K)")
+        new_quality=auto
+        [[ "$choice" == *source* ]] && new_quality=source
+        [[ "$new_quality" == "$video_quality" ]] && exit 0
+        "$video_helper" quality "$new_quality" >/dev/null
+        [[ "$new_quality" == "auto" ]] && "$video_helper" build-async
+        # Recharge la vidéo courante avec un fondu, sans toucher au thème.
+        wall="$(cat "$current_file" 2>/dev/null || true)"
+        case "${wall,,}" in
+            *.mp4|*.webm|*.mkv|*.mov|*.avi|*.m4v) "$HOME/.local/bin/caelestia-wallpaper-set" "$wall" ;;
+        esac
+        exit 0
         ;;
     "Reapply current wallpaper")
         ;;
@@ -101,7 +122,6 @@ if pgrep -x waypaper >/dev/null 2>&1; then
 fi
 
 "$HOME/.local/bin/caelestia-waypaper-apply"
-"$HOME/.local/bin/clipse-theme-sync" --refresh-running >/dev/null 2>&1 || true
 
 if [[ "$was_open" = "1" ]]; then
     WAYPAPER_UI=1 "$HOME/.local/bin/waypaper-open" --no-kill --force

@@ -70,15 +70,18 @@ hl.on("hyprland.start", function()
 end)
 
 hl.unbind("SUPER + ALT + W")
-hl.bind("SUPER + ALT + W", hl.dsp.exec_cmd(home .. "/.local/bin/caelestia-wallpaper-menu"))
+hl.bind(
+    "SUPER + ALT + W",
+    hl.dsp.exec_cmd(home .. "/.local/bin/caelestia-wallpaper-menu"),
+    { release = true }
+)
 hl.unbind("SUPER + ALT + X")
 hl.bind("SUPER + ALT + X", hl.dsp.exec_cmd(home .. "/.local/bin/waypaper-open"))
 hl.unbind("SUPER + ALT + C")
 hl.bind("SUPER + ALT + C", hl.dsp.exec_cmd(home .. "/.local/bin/caelestia-theme-menu"))
 
--- Clipse GUI owns clipboard history. Stop Caelestia's cliphist watchers.
+-- Clipse GUI owns clipboard history.
 hl.on("hyprland.start", function()
-    hl.exec_cmd([[sleep 0.2; pkill -f "wl-paste.*cliphist store" || true]])
     hl.exec_cmd(home .. "/.local/bin/cg-open --ensure-listener")
 end)
 
@@ -99,4 +102,4 @@ hl.window_rule({
 hl.unbind("SUPER + V")
 hl.bind("SUPER + V", hl.dsp.exec_cmd(home .. "/.local/bin/cg-open"), { release = true })
 hl.unbind("SUPER + ALT + V")
-hl.bind("SUPER + ALT + V", hl.dsp.exec_cmd("pkill fuzzel || caelestia clipboard"))
+hl.bind("SUPER + ALT + V", hl.dsp.exec_cmd(home .. "/.local/bin/cg-open"), { release = true })

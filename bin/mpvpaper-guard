@@ -10,6 +10,11 @@ log="/tmp/mpvpaper-guard.log"
 operation_lockfile="${XDG_RUNTIME_DIR:-/tmp}/mpvpaper-guard.ops.lock"
 last_ok_log=0
 
+# Fichier réellement lu par mpvpaper (copie à la résolution écran ou original, cf. Super+Alt+C).
+playable_source() {
+    "$HOME/.local/bin/caelestia-wallpaper-video" playable "$1" 2>/dev/null || printf '%s\n' "$1"
+}
+
 is_animated() {
     case "${1,,}" in
         *.mp4|*.webm|*.mkv|*.mov|*.avi|*.m4v|*.gif) return 0 ;;
@@ -226,7 +231,7 @@ start_current_wallpaper() {
     fi
     launch_options="$launch_options --background-color=$color"
 
-    /usr/bin/mpvpaper --fork -o "$launch_options" "$output" "$wp" 200>&- >/tmp/mpvpaper-guard-mpvpaper.log 2>&1 || {
+    /usr/bin/mpvpaper --fork -o "$launch_options" "$output" "$(playable_source "$wp")" 200>&- >/tmp/mpvpaper-guard-mpvpaper.log 2>&1 || {
         printf '[%s] mpvpaper restart failed for %s\n' "$(date '+%F %T')" "$wp" >>"$log"
         return 1
     }
@@ -256,7 +261,7 @@ sync_once_locked() {
         return 0
     fi
 
-    desired_source="$wp"
+    desired_source="$(playable_source "$wp")"
 
     if (( count == 0 )); then
         start_current_wallpaper "sync missing" "$rss_mib"
@@ -331,8 +336,8 @@ check_once() {
 
     wp="$(current_wallpaper)"
     if [[ -n "$wp" && -e "$wp" ]] && is_animated "$wp"; then
-        desired_source="$wp"
-        if [[ -n "$desired_source" && -e "$desired_source" ]] && ! current_mpvpaper_uses_source "$desired_source"; then
+        desired_source="$(playable_source "$wp")"
+        if [[ -n "$desired_source" && -e "$desired_source" ]] && ! current_mpvpaper_uses_source "$desired_source" && ! current_mpvpaper_uses_source "$wp"; then
             if mpvpaper_load_source "$desired_source"; then
                 return 0
             fi
@@ -371,6 +376,11 @@ case "${1:-}" in
 esac
 
 while true; do
+    wp="$(current_wallpaper)"
+    if [[ -z "$wp" || ! -e "$wp" ]] || ! is_animated "$wp"; then
+        exit 0
+    fi
+
     if check_once; then
         sleep "$interval_seconds"
     else

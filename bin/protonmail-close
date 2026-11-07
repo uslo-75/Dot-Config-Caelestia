@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -u
+
+pids="$(
+    ps -u "$USER" -eo pid=,args= \
+    | grep -Ei 'proton.*mail|protonmail|proton-mail|mail\.proton' \
+    | grep -Evi 'protonmail-tray|bridge|vpn|grep' \
+    | awk '{print $1}'
+)"
+
+if [[ -n "$pids" ]]; then
+    echo "$pids" | xargs -r kill -TERM
+    sleep 1
+    echo "$pids" | xargs -r kill -KILL 2>/dev/null || true
+fi

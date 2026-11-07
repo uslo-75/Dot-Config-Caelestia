@@ -2,7 +2,7 @@
 
 Overlay portable de la configuration Caelestia/Hyprland de `uslo-75` pour Arch Linux.
 
-Il installe les personnalisations utiles sans recopier la configuration matérielle des écrans : raccourcis AZERTY, intégration Clipse pour `Super+V`, gestion des fonds d'écran statiques et animés avec Waypaper/mpvpaper, thèmes dynamiques, services de maintenance et images de profil.
+Il installe les personnalisations utiles sans recopier la configuration matérielle des écrans : raccourcis AZERTY, intégration Clipse sérialisée et sauvegardée pour `Super+V`, gestion des fonds d'écran statiques et animés avec Waypaper/mpvpaper (fondus image/vidéo, copies vidéo à la résolution de l'écran), thèmes dynamiques, icône Proton Mail dans la barre, services de maintenance et images de profil.
 
 ## Installation rapide
 
@@ -20,6 +20,7 @@ Par défaut, l'installeur :
 - installe les dépendances manquantes avec `pacman` et `yay` ;
 - sauvegarde chaque élément remplacé sous `~/.local/state/caelestia-portable/backups/` ;
 - applique l'overlay Caelestia/Hyprland et les correctifs QML ;
+- conserve les réglages et états existants de Caelestia, Waypaper et Clipse lors d'une réinstallation ;
 - installe les dix images de profil dans `~/Images/Profils` ;
 - conserve la photo existante ou utilise `Sylvie.png` si `~/.face` est absent ;
 - télécharge et vérifie l'archive `wallpapers-v1` depuis GitHub Releases ;
@@ -60,10 +61,10 @@ Validation locale complète :
 | `Super+T` | Kitty |
 | `Super+W` | Zen Browser |
 | `Super+V` | Ouvrir/fermer Clipse GUI |
-| `Super+Alt+V` | Presse-papiers Caelestia d'origine |
+| `Super+Alt+V` | Ouvrir/fermer Clipse GUI (raccourci secondaire) |
 | `Super+Alt+W` | Menu de fonds d'écran |
 | `Super+Alt+X` | Interface Waypaper |
-| `Super+Alt+C` | Mode/variante du thème courant |
+| `Super+Alt+C` | Mode/variante du thème courant, qualité des fonds vidéo (auto ou source 4K) |
 
 ## Compatibilité et sécurité
 
