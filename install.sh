@@ -185,9 +185,67 @@ deploy_if_missing() {
     deploy "$source" "$destination" "$mode"
 }
 
+# Les règles hl.monitor sont propres à la machine et restent hors du dépôt : avant de
+# remplacer hypr-user.lua, elles sont déplacées dans hypr-monitors.lua, que hypr-user.lua charge.
+migrate_hypr_monitors() {
+    local user_file="$HOME/.config/caelestia/hypr-user.lua"
+    local monitors_file="$HOME/.config/caelestia/hypr-monitors.lua"
+    local rules count
+    [[ -f "$user_file" ]] || return 0
+    rules="$(python3 - "$user_file" <<'PY'
+import sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+blocks = []
+position = 0
+while (start := text.find("hl.monitor(", position)) != -1:
+    line_start = text.rfind("\n", 0, start) + 1
+    position = start + 1
+    if "--" in text[line_start:start]:
+        continue
+    depth, index, quote = 0, start + len("hl.monitor"), None
+    while index < len(text):
+        char = text[index]
+        if quote:
+            if char == "\\":
+                index += 1
+            elif char == quote:
+                quote = None
+        elif char in "\"'":
+            quote = char
+        elif char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                break
+        index += 1
+    else:
+        sys.exit(f"hl.monitor non refermé dans {sys.argv[1]}")
+    blocks.append(text[start:index + 1])
+    position = index + 1
+print("\n\n".join(blocks))
+PY
+)"
+    [[ -n "$rules" ]] || return 0
+    count="$(rg -c '^hl\.monitor\(' <<<"$rules")"
+    backup_path "$monitors_file"
+    if (( DRY_RUN )); then
+        log "déplacerait $count règle(s) hl.monitor de $user_file vers $monitors_file"
+        return 0
+    fi
+    if [[ ! -e "$monitors_file" ]]; then
+        printf '%s\n' "-- Monitor layout of this machine (not in the repo), loaded by hypr-user.lua." > "$monitors_file"
+    fi
+    printf '\n%s\n' "$rules" >> "$monitors_file"
+    log "$count règle(s) d'écran conservée(s) dans $monitors_file"
+}
+
 install_dotfiles() {
     local source name
     log "installation des réglages utilisateur"
+    migrate_hypr_monitors
     for source in "$REPO_ROOT"/dotfiles/caelestia/*; do
         name="$(basename -- "$source")"
         case "$name" in

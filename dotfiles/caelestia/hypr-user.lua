@@ -1,5 +1,12 @@
 local home = os.getenv("HOME")
 
+-- Monitor layout: machine-specific, kept out of the repo in hypr-monitors.lua (install.sh moves existing rules there).
+local monitors = io.open(home .. "/.config/caelestia/hypr-monitors.lua")
+if monitors then
+    monitors:close()
+    require("hypr-monitors")
+end
+
 -- Keyboard and workspaces: French AZERTY top row.
 hl.config({
     input = {

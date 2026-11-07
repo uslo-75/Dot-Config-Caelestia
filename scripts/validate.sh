@@ -5,15 +5,24 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 printf '[1/7] Bash\n'
-bash -n install.sh restore.sh scripts/*.sh bin/*
+# bash -n ne lit que son premier argument : chaque script est vérifié séparément.
+for file in install.sh restore.sh scripts/*.sh bin/*; do
+    [[ -f "$file" ]] || continue
+    head -n 1 "$file" | rg -q '^#!.*python' && continue
+    bash -n "$file"
+done
 
 printf '[2/7] Python\n'
 python3 - <<'PY'
 import ast
 from pathlib import Path
 
-for name in ("bin/clipse-gui-fixed", "bin/clipse-theme-sync", "bin/protonmail-tray"):
-    ast.parse(Path(name).read_text(encoding="utf-8"), filename=name)
+for path in sorted(Path("bin").iterdir()):
+    if not path.is_file():
+        continue
+    source = path.read_text(encoding="utf-8")
+    if source.startswith("#!") and "python" in source.splitlines()[0]:
+        ast.parse(source, filename=str(path))
 PY
 
 printf '[3/7] JSON\n'
@@ -44,9 +53,13 @@ if rg -n -F "$source_home" . -g '!.git/**' -g '!dist/**'; then
     exit 1
 fi
 if find . -path './.git' -prune -o -path './dist' -prune -o -type f \
-    \( -name '*.bak*' -o -name '*.log' -o -name 'clipboard_history.json' -o -name 'monitors.conf' -o -name 'workspaces.conf' -o -name 'waypaper-current' \) \
+    \( -name '*.bak*' -o -name '*.log' -o -name 'clipboard_history.json' -o -name 'monitors.conf' -o -name 'hypr-monitors.lua' -o -name 'workspaces.conf' -o -name 'waypaper-current' \) \
     -print -quit | rg -q .; then
     printf 'Fichier d’état interdit détecté.\n' >&2
+    exit 1
+fi
+if rg -n '^\s*hl\.monitor\(' dotfiles; then
+    printf 'Règle d’écran détectée : elle doit rester dans ~/.config/caelestia/hypr-monitors.lua.\n' >&2
     exit 1
 fi
 

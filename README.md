@@ -70,7 +70,7 @@ Validation locale complète :
 
 Les correctifs QML sont basés sur Caelestia Shell 2.5.0 (tag `v2.5.0`) et Quickshell 0.3.2. Ils sont testés avant application ; une version incompatible provoque un arrêt sans écraser les fichiers QML.
 
-Le dépôt exclut volontairement les configurations `monitor`, caches, logs, historiques du presse-papiers, fichiers d'état contenant des chemins absolus et sauvegardes locales.
+Le dépôt exclut volontairement les configurations `monitor`, caches, logs, historiques du presse-papiers, fichiers d'état contenant des chemins absolus et sauvegardes locales. Les règles d'écran de chaque machine vivent dans `~/.config/caelestia/hypr-monitors.lua`, chargé par `hypr-user.lua` s'il existe : lors d'une réinstallation, l'installeur y déplace les `hl.monitor` présents dans l'ancien `hypr-user.lua` avant de le remplacer.
 
 ## Boot, NVIDIA et connexion automatique
 
