@@ -11,10 +11,19 @@ Il installe les personnalisations utiles sans recopier la configuration matérie
 - Filtres Tous / Images / Animés / Favoris (`Tab`), favoris (`Ctrl+D`), carte au hasard (`Ctrl+R`), lecture/pause (`Ctrl+P`), diaporama (5 min à 1 h), qualité vidéo.
 - Couleurs mémorisées par fond (`Ctrl+M`) : mode et variante, avec les pastilles réelles de chaque variante pour ce fond, appliqués en une seule passe (`caelestia-wallpaper-apply`).
 - `caelestia-wallpaper-cache` prépare en arrière-plan des copies à la hauteur de l'écran (4K → 1080p, 3 à 4× moins de CPU), des planches d'aperçu (6 s de vidéo dans une seule texture compressée, animée par un shader) et les métadonnées (`~/.cache/caelestia/wallpaper-video/index.json`).
-- **Un fond par écran** : le menu des écrans (`Ctrl+E`) vise « Tous les écrans » ou un seul. Un écran visé seul garde son propre fond, les autres affichent le fond commun ; les couleurs du thème restent celles du fond commun. « Reprendre le fond commun » retire le fond propre, et appliquer à tous les écrans les retire tous. Le même choix existe dans les réglages du shell (page « Wallpaper & style », une vignette par écran détecté) et en commande : `caelestia shell wallstudio setFor DP-1 /chemin/du/fond` (chemin vide : fond commun), `caelestia shell wallstudio screens` pour la liste. Le diaporama et `caelestia shell wallpaper set` ne changent que le fond commun.
+- **Un fond par écran** : le menu des écrans (`Ctrl+E`) vise « Tous les écrans » ou un seul. Un écran visé seul garde son propre fond, les autres affichent le fond commun ; les couleurs du thème restent celles du fond commun. « Reprendre le fond commun » retire le fond propre, et appliquer à tous les écrans les retire tous. Le même choix existe dans les réglages du shell (page « Wallpaper & style », une vignette par écran détecté ; chaque fenêtre a sa propre cible) et en commande : `caelestia shell wallstudio setFor DP-1 /chemin/du/fond` (chemin vide : fond commun), `caelestia shell wallstudio screens` pour la liste. Le diaporama et `caelestia shell wallpaper set` ne changent que le fond commun.
 - La vidéo se met en pause, lecteur déchargé, quand une fenêtre en vrai plein écran ou le mode jeu couvre l'écran (pas pour une fenêtre seulement agrandie, qui laisse voir le fond).
 - Hyprland 0.57 laisse invisible une couche de fond créée pendant qu'une fenêtre est en plein écran sur son écran (shell redémarré pendant une vidéo ou un jeu) : le fond de cet écran est re-créé dès que le plein écran se termine (`modules/background/Background.qml`).
 - Fluidité : créer ou détruire un lecteur vidéo bloque l'interface (~80 ms avec le décodeur NVIDIA). Les mini-clips n'en utilisent donc aucun, les aperçus du bureau passent par une image fixe superposée au fond en cours, et le lecteur du fond ne change qu'une fois le studio refermé. Les animations du shell suivent la fréquence de chaque écran (`QSG_USE_SIMPLE_ANIMATION_DRIVER` dans `shell.qml`, à retirer pour revenir à l'horloge de Qt).
+
+## Fonds et couleurs dans les réglages du shell
+
+Les pages « Wallpaper & style » des réglages (Nexus) reprennent le studio :
+
+- **Page principale** : aperçu du fond de l'écran visé, une vignette par écran, et une section « Fonds animés et transitions » (lecture/pause, qualité des vidéos, transition, diaporama).
+- **Wallpapers** (`modules/nexus/pages/extras/WallpapersPage.qml`, à la place de la page d'origine qui ne montrait que les images du dossier) : galerie de tous les fonds, images et animés, sous-dossiers compris, avec les filtres et favoris du studio, une recherche, le fond actuel repéré, et un mini-clip au survol des fonds animés (sans lecteur vidéo). Un clic applique à l'écran visé.
+- **Colours** (`ColoursPage.qml`, la page d'origine est encore vide) : palette en cours, choix du thème (dynamique d'après le fond, ou l'un des thèmes de `caelestia scheme`), mode et variante du thème dynamique avec les vraies pastilles de chaque variante pour le fond, transparence et opacités.
+- Les couleurs sont les mêmes sur tous les écrans (une seule palette pour le shell, les applis et le terminal). « Prendre les couleurs du fond de <écran> » tire le thème du fond d'un écran : ce fond devient le fond commun, chaque écran garde ce qu'il affiche.
 
 ## Vue d'ensemble des espaces de travail (`Super+Tab`)
 
@@ -40,6 +49,10 @@ Modifiables dans les réglages du shell, page « Extras » (`modules/nexus/pages
 - `web` : `engines`, la liste des moteurs (`key` tapée après `>`, `name`, `icon`, `url` où `%s` est la recherche). La page « Extras » permet d'en ajouter, d'en retirer et de changer leur adresse.
 
 Les fonds propres à chaque écran sont un état, pas un réglage : ils sont gardés avec les favoris du studio dans `~/.local/state/caelestia/wallstudio.json` (`screens`).
+
+## Notifications
+
+L'icône d'une appli envoyée comme fichier (chemin ou adresse `file://`, ce que fait Claude) s'affiche dans la bulle, le panneau latéral et l'écran de verrouillage ; une icône inconnue du thème donne l'icône générique au lieu du damier rose et noir « icône introuvable ».
 
 ## Presse-papiers (`Super+V`)
 

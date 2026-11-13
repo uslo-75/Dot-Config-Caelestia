@@ -22,7 +22,9 @@ Item {
     readonly property bool isCurrent: PathView.isCurrentItem
     readonly property var meta: WallStudio.items[path] ?? null
     readonly property bool isVideo: WallStudio.isVideo(path)
-    readonly property bool isActual: path === WallStudio.targetWall
+    // Fond affiché par l'écran visé dans le studio.
+    property string targetWall
+    readonly property bool isActual: path === targetWall
     readonly property bool isFavourite: WallStudio.favourites.includes(path)
     readonly property bool hasTheme: {
         WallStudio.themes;

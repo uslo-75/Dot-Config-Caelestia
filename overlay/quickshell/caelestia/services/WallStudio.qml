@@ -38,15 +38,7 @@ Singleton {
     property var screenWalls: ({})
     property bool stateLoaded
 
-    // Écran visé par le studio et les réglages ("" = tous les écrans). Non mémorisé.
-    property string target
-    readonly property string targetWall: wallFor(target)
     readonly property list<string> screenNames: Screens.screens.map(s => s.name)
-
-    onScreenNamesChanged: {
-        if (target && !screenNames.includes(target))
-            target = "";
-    }
 
     // Transition du prochain changement de fond (clé de Caelestia.Shaders, "" = celle de la config)
     property string activeTransition
@@ -319,19 +311,23 @@ Singleton {
         save();
     }
 
-    function setTarget(screen: string): void {
-        target = screenNames.includes(screen) ? screen : "";
+    // Le studio et chaque fenêtre de réglages ont leur propre « cible » : l'écran visé par le
+    // choix d'un fond, "" pour tous les écrans. Les fonctions ci-dessous la reçoivent.
+
+    // Cible proposée à l'ouverture sur un écran : cet écran s'il a son propre fond (c'est lui
+    // qu'on voit), sinon tous les écrans.
+    function defaultTarget(screen: string): string {
+        return hasOwnWall(screen) && screenNames.includes(screen) ? screen : "";
     }
 
-    // Cible proposée à l'ouverture du studio ou des réglages sur un écran : cet écran s'il a
-    // son propre fond (c'est lui qu'on voit), sinon tous les écrans.
-    function resetTarget(screen: string): void {
-        target = hasOwnWall(screen) && screenNames.includes(screen) ? screen : "";
+    // "" (tous les écrans) si l'écran visé n'est plus branché.
+    function validTarget(target: string): string {
+        return screenNames.includes(target) ? target : "";
     }
 
-    function cycleTarget(step: int): void {
+    function nextTarget(target: string, step: int): string {
         const all = ["", ...screenNames];
-        target = all[(all.indexOf(target) + step + all.length) % all.length];
+        return all[(Math.max(0, all.indexOf(target)) + step + all.length) % all.length];
     }
 
     function targetName(screen: string): string {
@@ -342,7 +338,7 @@ Singleton {
     readonly property bool hasOwnWalls: screenNames.some(s => !!screenWalls[s])
 
     // `path` est déjà ce qu'affiche la cible (rien à appliquer).
-    function isTargetWall(path: string): bool {
+    function isWallOf(target: string, path: string): bool {
         if (target)
             return path === wallFor(target);
         return path === Wallpapers.actualCurrent && !hasOwnWalls;
@@ -350,7 +346,7 @@ Singleton {
 
     // Choix fait dans le studio ou les réglages : fond de l'écran visé, ou fond commun à tous
     // les écrans (les fonds propres sont alors oubliés).
-    function applyToTarget(path: string, force: bool): void {
+    function applyTo(target: string, path: string, force: bool): void {
         if (!path)
             return;
         if (target) {
@@ -364,6 +360,24 @@ Singleton {
             save();
         }
         apply(path, force);
+    }
+
+    // Les couleurs du thème viennent du fond commun : pour les tirer du fond d'un écran, ce fond
+    // devient le fond commun, et les autres écrans gardent ce qu'ils affichent (ceux qui
+    // suivaient le fond commun reçoivent l'ancien comme fond propre). Rien ne change à l'image.
+    function themeFromScreen(screen: string): void {
+        const path = wallFor(screen);
+        if (!screenNames.includes(screen) || path === Wallpapers.actualCurrent)
+            return;
+        const next = Object.assign({}, screenWalls);
+        for (const s of screenNames) {
+            if (!next[s])
+                next[s] = Wallpapers.actualCurrent;
+        }
+        delete next[screen];
+        screenWalls = next;
+        save();
+        apply(path, true);
     }
 
     // ---- Application ----
@@ -418,9 +432,9 @@ Singleton {
         return candidates[Math.floor(Math.random() * candidates.length)]?.path ?? "";
     }
 
-    // Fond au hasard pour la cible (bouton du studio et des réglages).
-    function shuffle(poolName: string): void {
-        applyToTarget(randomFrom(poolName, targetWall), false);
+    // Fond au hasard pour une cible (bouton du studio et des réglages).
+    function shuffleFor(target: string, poolName: string): void {
+        applyTo(target, randomFrom(poolName, wallFor(target)), false);
     }
 
     // Fond commun au hasard (diaporama, commande).

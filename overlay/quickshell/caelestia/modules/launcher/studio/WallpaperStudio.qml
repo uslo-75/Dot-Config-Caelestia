@@ -22,7 +22,10 @@ Item {
 
     readonly property bool active: screenState.launcher
     property string overlay: "" // "", "transitions", "theme"
-    property string lastPath: WallStudio.targetWall
+    // Écran visé : "" pour tous, ou un écran qui garde alors son propre fond.
+    property string target
+    readonly property string targetWall: WallStudio.wallFor(target)
+    property string lastPath: targetWall
     property string lastQuery
     readonly property string screenName: screenState.modelData?.name ?? ""
     readonly property bool multiScreen: WallStudio.screenNames.length > 1
@@ -39,10 +42,9 @@ Item {
     property real lastStep
     property real wheelAcc
     readonly property bool currentIsActual: {
-        WallStudio.screenWalls; // dépendances de isTargetWall
-        WallStudio.target;
+        WallStudio.screenWalls; // dépendances de isWallOf
         Wallpapers.actualCurrent;
-        return currentPath !== "" && WallStudio.isTargetWall(currentPath);
+        return currentPath !== "" && WallStudio.isWallOf(target, currentPath);
     }
     readonly property var currentTheme: {
         WallStudio.themes; // dépendance
@@ -130,7 +132,7 @@ Item {
         const searching = query !== "" && query !== lastQuery;
         let idx = searching ? 0 : values.findIndex(w => w.path === lastPath);
         if (idx < 0 && !query)
-            idx = values.findIndex(w => w.path === WallStudio.targetWall);
+            idx = values.findIndex(w => w.path === WallStudio.wallFor(target));
         if (searching)
             moved = true;
         lastQuery = query;
@@ -209,21 +211,25 @@ Item {
     function syncSelection(): void {
         if (view.count === 0 || scrollAnim.running)
             return;
+        // PathView signale aussi la fin d'un placement fait par le studio : seul un vrai
+        // changement de carte compte comme une navigation.
+        if (view.currentIndex !== selectedIndex)
+            moved = true;
         selectedIndex = view.currentIndex;
         lastPath = entries[selectedIndex]?.path ?? lastPath;
-        moved = true;
     }
 
     // Place le carrousel sur le fond de l'écran visé.
     function showTargetWall(): void {
-        lastPath = WallStudio.targetWall;
+        // Lu directement : appelé au changement de cible, avant que `targetWall` ne soit recalculé.
+        lastPath = WallStudio.wallFor(target);
         restoreIndex();
         moved = false;
     }
 
     // À l'ouverture : la cible est cet écran s'il a son propre fond, sinon tous les écrans.
     function opened(): void {
-        WallStudio.resetTarget(screenName);
+        target = WallStudio.defaultTarget(screenName);
         targetMenu.sync();
         showTargetWall();
     }
@@ -233,9 +239,9 @@ Item {
         if (!path)
             return;
         // Fond commun : les couleurs d'aperçu restent jusqu'à l'arrivée du nouveau thème.
-        if (WallStudio.target === "" && Colours.scheme === "dynamic" && path !== Wallpapers.actualCurrent)
+        if (target === "" && Colours.scheme === "dynamic" && path !== Wallpapers.actualCurrent)
             Wallpapers.previewColourLock = true;
-        Wallpapers.setWallpaper(path);
+        WallStudio.applyTo(target, path, false);
         if (!keepOpen)
             screenState.launcher = false;
     }
@@ -261,10 +267,10 @@ Item {
 
     // Les couleurs du thème viennent du fond commun : sans objet quand un seul écran est visé.
     function setTheme(mode: string, variant: string): void {
-        if (!currentPath || WallStudio.target !== "")
+        if (!currentPath || target !== "")
             return;
         WallStudio.setTheme(currentPath, mode, variant);
-        Wallpapers.preview(currentPath); // couleurs de prévisualisation à jour
+        Wallpapers.preview(currentPath, target); // couleurs de prévisualisation à jour
     }
 
     // Raccourcis clavier (appelé par la barre de recherche). Renvoie true si la touche est utilisée.
@@ -289,12 +295,12 @@ Item {
                 toggleOverlay("transitions");
                 return true;
             case Qt.Key_M:
-                if (WallStudio.target === "")
+                if (target === "")
                     toggleOverlay("theme");
                 return true;
             case Qt.Key_E:
                 if (multiScreen)
-                    WallStudio.cycleTarget(shift ? -1 : 1);
+                    target = WallStudio.nextTarget(target, shift ? -1 : 1);
                 return true;
             case Qt.Key_P:
                 PersistentState.wallpaperPlaying = !PersistentState.wallpaperPlaying;
@@ -370,7 +376,6 @@ Item {
             overlay = "";
             previewTimer.stop();
             Wallpapers.stopPreview();
-            WallStudio.target = ""; // Rien d'autre ne doit viser cet écran par mégarde.
         }
     }
 
@@ -380,16 +385,21 @@ Item {
     }
 
     // Changement d'écran visé : l'aperçu suit ; sans navigation, le carrousel rejoint son fond.
+    onTargetChanged: {
+        targetMenu.sync();
+        if (!active)
+            return;
+        if (overlay === "theme")
+            overlay = "";
+        if (!moved)
+            showTargetWall();
+        previewTimer.restart();
+    }
+
+    // Écran débranché pendant qu'on le visait : retour à tous les écrans.
     Connections {
-        function onTargetChanged(): void {
-            targetMenu.sync();
-            if (!root.active)
-                return;
-            if (root.overlay === "theme")
-                root.overlay = "";
-            if (!root.moved)
-                root.showTargetWall();
-            previewTimer.restart();
+        function onScreenNamesChanged(): void {
+            root.target = WallStudio.validTarget(root.target);
         }
 
         target: WallStudio
@@ -397,10 +407,8 @@ Item {
 
     // Seulement si ce studio est celui qui prévisualise (un autre écran peut en avoir un ouvert).
     Component.onDestruction: {
-        if (active) {
+        if (active)
             Wallpapers.stopPreview();
-            WallStudio.target = "";
-        }
     }
 
     // L'aperçu sur le bureau (transition + vidéo + couleurs) attend que la navigation se pose.
@@ -410,7 +418,7 @@ Item {
         interval: 140
         onTriggered: {
             if (root.active && root.currentPath)
-                Wallpapers.preview(root.currentPath);
+                Wallpapers.preview(root.currentPath, root.target);
         }
     }
 
@@ -447,10 +455,10 @@ Item {
             id: targetChip
 
             visible: root.multiScreen
-            icon: WallStudio.target === "" ? "select_all" : "desktop_windows"
-            text: WallStudio.targetName(WallStudio.target)
+            icon: root.target === "" ? "select_all" : "desktop_windows"
+            text: WallStudio.targetName(root.target)
             trailingIcon: "expand_more"
-            checked: targetMenu.expanded || WallStudio.target !== ""
+            checked: targetMenu.expanded || root.target !== ""
             onClicked: targetMenu.expanded = !targetMenu.expanded
         }
 
@@ -471,7 +479,7 @@ Item {
         IconButton {
             type: IconButton.Tonal
             icon: "shuffle"
-            onClicked: WallStudio.shuffle(WallStudio.filter)
+            onClicked: WallStudio.shuffleFor(root.target, WallStudio.filter)
         }
 
         IconButton {
@@ -503,7 +511,7 @@ Item {
             text: modelData === "" ? "Tous les écrans" : WallStudio.screenWalls[modelData] ? `${modelData}  ·  fond propre` : modelData
             icon: modelData === "" ? "select_all" : "desktop_windows"
             value: modelData
-            onClicked: WallStudio.setTarget(modelData)
+            onClicked: root.target = modelData
         }
     }
 
@@ -511,7 +519,7 @@ Item {
         id: targetMenu
 
         function sync(): void {
-            active = items.find(i => i.value === WallStudio.target) ?? items[0] ?? null;
+            active = items.find(i => i.value === root.target) ?? items[0] ?? null;
         }
 
         attachTo: targetChip
@@ -672,6 +680,7 @@ Item {
             delegate: StudioCard {
                 cardWidth: root.cardWidth
                 cardHeight: root.cardHeight
+                targetWall: root.targetWall
                 onPicked: root.select(index)
                 onActivated: {
                     root.select(index);
@@ -878,7 +887,7 @@ Item {
                 property bool armed // Créé invisible, pour que la première ouverture soit animée aussi.
 
                 shown: armed && root.overlay === "transitions"
-                fromSource: WallStudio.fileUrl(Wallpapers.stillFor(WallStudio.targetWall))
+                fromSource: WallStudio.fileUrl(Wallpapers.stillFor(root.targetWall))
                 toSource: root.currentPath ? WallStudio.fileUrl(WallStudio.posterFor(root.currentPath)) : ""
                 onClosed: root.overlay = ""
                 Component.onCompleted: armed = true
@@ -950,8 +959,8 @@ Item {
                         return "";
                     const parts = WallStudio.details(root.currentPath);
                     if (root.currentIsActual)
-                        parts.push(WallStudio.target ? `fond actuel de ${WallStudio.target}` : "fond actuel");
-                    if (WallStudio.target)
+                        parts.push(root.target ? `fond actuel de ${root.target}` : "fond actuel");
+                    if (root.target)
                         parts.push("thème : couleurs du fond commun");
                     return parts.join("  ·  ");
                 }
@@ -962,7 +971,7 @@ Item {
 
             StyledText {
                 Layout.fillWidth: true
-                text: `⏎ appliquer   ⇧⏎ sans fermer   ⇥ filtre   Ctrl+D favori   Ctrl+R hasard   Ctrl+T transition   ${WallStudio.target ? "" : "Ctrl+M couleurs   "}Ctrl+P pause${root.multiScreen ? "   Ctrl+E écran" : ""}`
+                text: `⏎ appliquer   ⇧⏎ sans fermer   ⇥ filtre   Ctrl+D favori   Ctrl+R hasard   Ctrl+T transition   ${root.target ? "" : "Ctrl+M couleurs   "}Ctrl+P pause${root.multiScreen ? "   Ctrl+E écran" : ""}`
                 color: Colours.palette.m3outline
                 font: Tokens.font.label.small
                 elide: Text.ElideRight
@@ -971,14 +980,14 @@ Item {
 
         // Écran visé avec son propre fond : retour au fond commun.
         StudioChip {
-            visible: WallStudio.target !== "" && !!WallStudio.screenWalls[WallStudio.target]
+            visible: root.target !== "" && !!WallStudio.screenWalls[root.target]
             icon: "link"
             text: "Reprendre le fond commun"
-            onClicked: WallStudio.setScreenWall(WallStudio.target, "")
+            onClicked: WallStudio.setScreenWall(root.target, "")
         }
 
         StudioChip {
-            visible: WallStudio.target === ""
+            visible: root.target === ""
             icon: "palette"
             text: {
                 const t = root.currentTheme;
@@ -996,7 +1005,7 @@ Item {
         IconTextButton {
             type: TextButton.Filled
             icon: root.currentIsActual ? "check_circle" : "wallpaper"
-            text: root.currentIsActual ? "Fond actuel" : WallStudio.target ? `Appliquer à ${WallStudio.target}` : WallStudio.hasOwnWalls ? "Appliquer partout" : "Appliquer"
+            text: root.currentIsActual ? "Fond actuel" : root.target ? `Appliquer à ${root.target}` : WallStudio.hasOwnWalls ? "Appliquer partout" : "Appliquer"
             disabled: root.currentIsActual || !root.currentPath
             onClicked: root.applyCurrent(false)
         }

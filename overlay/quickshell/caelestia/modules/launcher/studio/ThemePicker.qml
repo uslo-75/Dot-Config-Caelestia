@@ -9,11 +9,13 @@ import qs.components.controls
 import qs.services
 
 // Couleurs mémorisées pour le fond sélectionné : mode + variante, avec les vraies pastilles
-// de chaque variante calculées pour ce fond.
+// de chaque variante calculées pour ce fond. Panneau du studio, ou bloc d'une page des
+// réglages (`embedded` : sans fond, ni titre, ni bouton de fermeture).
 Item {
     id: root
 
     property bool shown
+    property bool embedded
     property string path
     property var theme: ({
             mode: "auto",
@@ -22,7 +24,7 @@ Item {
     property var swatches: ({})
     readonly property string swatchKey: `${path}|${theme.mode}`
     readonly property var current: swatches[swatchKey] ?? null
-    readonly property int columns: Math.max(3, Math.min(5, Math.floor((width - Tokens.padding.large * 2) / 220)))
+    readonly property int columns: Math.max(embedded ? 2 : 3, Math.min(5, Math.floor((width - content.anchors.margins * 2) / 220)))
 
     signal picked(mode: string, variant: string)
     signal closed
@@ -48,6 +50,7 @@ Item {
     onShownChanged: request()
     onSwatchKeyChanged: request()
 
+    implicitHeight: content.implicitHeight + content.anchors.margins * 2
     opacity: shown ? 1 : 0
     scale: shown ? 1 : 0.97
     visible: opacity > 0
@@ -84,25 +87,31 @@ Item {
         }
     }
 
+    // Dans le studio, la molette ne doit pas atteindre le carrousel dessous.
     MouseArea {
         anchors.fill: parent
-        hoverEnabled: true
+        enabled: !root.embedded
+        hoverEnabled: !root.embedded
         onWheel: e => e.accepted = true
     }
 
     StyledRect {
         anchors.fill: parent
+        visible: !root.embedded
         radius: Tokens.rounding.large
         color: Colours.tPalette.m3surfaceContainer
     }
 
     ColumnLayout {
+        id: content
+
         anchors.fill: parent
-        anchors.margins: Tokens.padding.large
+        anchors.margins: root.embedded ? 0 : Tokens.padding.large
         spacing: Tokens.spacing.medium
 
         RowLayout {
             Layout.fillWidth: true
+            visible: !root.embedded
             spacing: Tokens.spacing.medium
 
             MaterialIcon {
@@ -275,6 +284,7 @@ Item {
 
         Item {
             Layout.fillHeight: true
+            visible: !root.embedded
         }
     }
 }

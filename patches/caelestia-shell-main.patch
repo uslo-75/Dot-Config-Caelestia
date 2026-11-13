@@ -1,3 +1,16 @@
+diff --git a/components/controls/Menu.qml b/components/controls/Menu.qml
+index b4bab56..b49c910 100644
+--- a/components/controls/Menu.qml
++++ b/components/controls/Menu.qml
+@@ -37,7 +37,7 @@ MouseArea {
+     parent: {
+         const win = QsWindow.window;
+         const contentWin = win as ContentWindow; // If inside the drawer content window, put it inside the interaction wrapper so hover works
+-        return contentWin ? contentWin.interactionWrapper : (win as QsWindow).contentItem;
++        return contentWin ? contentWin.interactionWrapper : (win as QsWindow)?.contentItem ?? null; // Fenêtre inconnue tant que le menu n'y est pas placé.
+     }
+     anchors.fill: parent
+ 
 diff --git a/components/widgets/CoverArt.qml b/components/widgets/CoverArt.qml
 index 1c7fbdb..b1f14ba 100644
 --- a/components/widgets/CoverArt.qml
@@ -14,7 +27,7 @@ index 1c7fbdb..b1f14ba 100644
                  to: 0
                  duration: 23500
 diff --git a/components/widgets/WallpaperImpl.qml b/components/widgets/WallpaperImpl.qml
-index 6229874..821cd0b 100644
+index 6229874..7c7293e 100644
 --- a/components/widgets/WallpaperImpl.qml
 +++ b/components/widgets/WallpaperImpl.qml
 @@ -6,10 +6,22 @@ import Caelestia.Shaders
@@ -54,7 +67,7 @@ index 6229874..821cd0b 100644
 +    // Fond appliqué à cet écran.
 +    readonly property string source: WallStudio.wallFor(screenName)
 +    // L'aperçu du studio concerne cet écran (il vise tous les écrans, ou celui-ci).
-+    readonly property bool previewed: Wallpapers.showPreview && (WallStudio.target === "" || WallStudio.target === screenName)
++    readonly property bool previewed: Wallpapers.showPreview && (Wallpapers.previewTarget === "" || Wallpapers.previewTarget === screenName)
 +
 +    // Fichier lu pour le fond appliqué (copie à la taille de l'écran pour les grandes vidéos).
 +    readonly property string playable: WallStudio.playableFor(source)
@@ -1168,8 +1181,54 @@ index 782cb71..3c2f2cd 100644
              playing: PersistentState.wallpaperPlaying
          }
      }
+diff --git a/modules/lock/NotifGroup.qml b/modules/lock/NotifGroup.qml
+index bc94fc8..76b36fe 100644
+--- a/modules/lock/NotifGroup.qml
++++ b/modules/lock/NotifGroup.qml
+@@ -25,8 +25,8 @@ StyledRect {
+         for (const n of notifs) {
+             if (!img && n.image.length > 0)
+                 img = n.image;
+-            if (!icon && n.appIcon.length > 0)
+-                icon = n.appIcon;
++            if (!icon)
++                icon = Icons.getNotifAppIcon(n.appIcon); // Source d'image, "" si l'icône est inconnue.
+             if (n.urgency === NotificationUrgency.Critical)
+                 hasCritical = true;
+             else if (n.urgency === NotificationUrgency.Normal)
+@@ -89,7 +89,7 @@ StyledRect {
+ 
+                 ColouredIcon {
+                     implicitSize: Math.round(TokenConfig.sizes.notifs.image * 0.6)
+-                    source: Quickshell.iconPath(root.appIcon)
++                    source: root.appIcon
+                     colour: root.urgency === "critical" ? Colours.palette.m3onError : root.urgency === "low" ? Colours.palette.m3onSurface : Colours.palette.m3onSecondaryContainer
+                     layer.enabled: root.appIcon.endsWith("symbolic")
+                 }
+@@ -133,7 +133,7 @@ StyledRect {
+                     ColouredIcon {
+                         anchors.centerIn: parent
+                         implicitSize: Math.round(Tokens.sizes.notifs.badge * 0.6)
+-                        source: Quickshell.iconPath(root.appIcon)
++                        source: root.appIcon
+                         colour: root.urgency === "critical" ? Colours.palette.m3onError : root.urgency === "low" ? Colours.palette.m3onSurface : Colours.palette.m3onSecondaryContainer
+                         layer.enabled: root.appIcon.endsWith("symbolic")
+                     }
+diff --git a/modules/nexus/NexusState.qml b/modules/nexus/NexusState.qml
+index 8e8744b..9d61ad6 100644
+--- a/modules/nexus/NexusState.qml
++++ b/modules/nexus/NexusState.qml
+@@ -11,6 +11,8 @@ QtObject {
+     property bool searchOpen
+ 
+     property string selectedWallpaperCategory
++    // Écran visé par le choix d'un fond d'écran dans cette fenêtre ("" : tous les écrans).
++    property string wallTarget
+     property BluetoothDevice selectedBtDevice
+     property DesktopEntry selectedApp
+     property int editingVpnIndex: -1
 diff --git a/modules/nexus/PageCompRegistry.qml b/modules/nexus/PageCompRegistry.qml
-index 1b725a3..657ad40 100644
+index 1b725a3..42adf63 100644
 --- a/modules/nexus/PageCompRegistry.qml
 +++ b/modules/nexus/PageCompRegistry.qml
 @@ -11,6 +11,7 @@ import qs.modules.nexus.pages
@@ -1180,6 +1239,22 @@ index 1b725a3..657ad40 100644
  import qs.modules.nexus.pages.network
  import qs.modules.nexus.pages.panels
  import qs.modules.nexus.pages.services
+@@ -29,13 +30,13 @@ QtObject {
+                     WallpaperAndStyle {}
+                 }
+                 Component {
+-                    WallpaperSelect {}
++                    WallpapersPage {} // Galerie des ajouts (images et fonds animés) à la place de WallpaperSelect.
+                 }
+                 Component {
+                     WallpaperCategory {}
+                 }
+                 Component {
+-                    ColourSelect {}
++                    ColoursPage {} // À la place de ColourSelect, encore vide en amont.
+                 }
+             }
+         },
 @@ -175,6 +176,17 @@ QtObject {
                  }
              }
@@ -1217,10 +1292,10 @@ index 90de4fb..9c3d59b 100644
          // About
          {
 diff --git a/modules/nexus/pages/WallpaperAndStyle.qml b/modules/nexus/pages/WallpaperAndStyle.qml
-index c3f3f5d..5d64273 100644
+index c3f3f5d..4d17261 100644
 --- a/modules/nexus/pages/WallpaperAndStyle.qml
 +++ b/modules/nexus/pages/WallpaperAndStyle.qml
-@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
+@@ -2,9 +2,11 @@ pragma ComponentBehavior: Bound
  
  import QtQuick
  import QtQuick.Layouts
@@ -1228,23 +1303,107 @@ index c3f3f5d..5d64273 100644
  import Caelestia.Components
  import Caelestia.Config
  import Caelestia.I18n
-@@ -16,6 +17,79 @@ PageBase {
++import Caelestia.State
+ import qs.components
+ import qs.components.controls
+ import qs.components.widgets
+@@ -16,24 +18,187 @@ PageBase {
  
      title: Tr.tr("Wallpaper & style")
  
-+    // Écran visé par le choix d'un fond : tous (fond commun), ou un seul, qui garde alors son
-+    // propre fond. L'aperçu montre le fond de la cible.
-+    readonly property ShellScreen targetScreen: Screens.screens.find(s => s.name === WallStudio.target) ?? nState.screen
++    // Écran visé par le choix d'un fond dans cette fenêtre : tous (fond commun), ou un seul, qui
++    // garde alors son propre fond. L'aperçu montre le fond de la cible.
++    readonly property string target: nState.wallTarget
++    readonly property ShellScreen targetScreen: Screens.screens.find(s => s.name === target) ?? nState.screen
 +
-+    Component.onCompleted: WallStudio.resetTarget(nState.screen?.name ?? "")
-+    Component.onDestruction: WallStudio.target = "" // Rien d'autre ne doit viser cet écran par mégarde.
++    readonly property list<MenuItem> qualityItems: [
++        MenuItem {
++            text: `Adaptée à l'écran (${WallStudio.targetHeight}p)`
++            icon: "hd"
++            value: "auto"
++        },
++        MenuItem {
++            text: "Source (4K, plus gourmand)"
++            icon: "4k"
++            value: "source"
++        }
++    ]
++    // Les plus courantes ; le studio (Ctrl+T) les propose toutes, avec un aperçu.
++    readonly property list<MenuItem> transitionItems: [
++        MenuItem {
++            text: "Aléatoire"
++            icon: "casino"
++            value: "random"
++        },
++        MenuItem {
++            text: "Celle de la configuration"
++            icon: "gradient"
++            value: "config"
++        },
++        MenuItem {
++            text: "Fondu enchaîné"
++            icon: "gradient"
++            value: "crossfade"
++        },
++        MenuItem {
++            text: "Iris"
++            icon: "camera"
++            value: "iris"
++        },
++        MenuItem {
++            text: "Morphose"
++            icon: "blur_on"
++            value: "morph"
++        },
++        MenuItem {
++            text: "Fumée"
++            icon: "cloud"
++            value: "smoke"
++        },
++        MenuItem {
++            text: "Zoom flou"
++            icon: "zoom_in_map"
++            value: "zoomBlurPull"
++        }
++    ]
++    readonly property list<MenuItem> slideshowItems: [
++        MenuItem {
++            text: "Désactivé"
++            icon: "timer_off"
++            value: 0
++        },
++        MenuItem {
++            text: "Toutes les 5 minutes"
++            icon: "timer"
++            value: 5
++        },
++        MenuItem {
++            text: "Toutes les 15 minutes"
++            icon: "timer"
++            value: 15
++        },
++        MenuItem {
++            text: "Toutes les 30 minutes"
++            icon: "timer"
++            value: 30
++        },
++        MenuItem {
++            text: "Toutes les heures"
++            icon: "schedule"
++            value: 60
++        }
++    ]
++
++    Component.onCompleted: nState.wallTarget = WallStudio.defaultTarget(nState.screen?.name ?? "")
 +
 +    component ScreenTile: Item {
 +        id: tile
 +
 +        required property string modelData // "" : tous les écrans
-+        readonly property bool selected: WallStudio.target === modelData
++        property bool selected
 +        readonly property bool own: !!WallStudio.screenWalls[modelData]
++
++        signal picked
 +
 +        implicitWidth: 144
 +        implicitHeight: tileLayout.implicitHeight
@@ -1301,14 +1460,27 @@ index c3f3f5d..5d64273 100644
 +
 +        StateLayer {
 +            radius: Tokens.rounding.medium
-+            onClicked: WallStudio.setTarget(tile.modelData)
++            onClicked: tile.picked()
 +        }
 +    }
 +
      ColumnLayout {
          anchors.horizontalCenter: parent.horizontalCenter
          anchors.top: parent.top
-@@ -27,13 +101,14 @@ PageBase {
+         width: root.cappedWidth
+         spacing: Tokens.spacing.large
+ 
++        // Écran débranché pendant qu'on le visait : retour à tous les écrans.
++        Connections {
++            function onScreenNamesChanged(): void {
++                root.nState.wallTarget = WallStudio.validTarget(root.nState.wallTarget);
++            }
++
++            target: WallStudio
++        }
++
+         ClipRect {
+             id: wallWrapper
  
              Layout.alignment: Qt.AlignHCenter
              implicitWidth: {
@@ -1326,15 +1498,15 @@ index c3f3f5d..5d64273 100644
              }
  
              color: Colours.tPalette.m3surfaceContainer
-@@ -71,6 +146,7 @@ PageBase {
+@@ -71,6 +236,7 @@ PageBase {
  
              WallpaperImpl {
                  anchors.fill: parent
-+                screenName: WallStudio.target
++                screenName: root.target
                  opacity: Config.background.wallpaperEnabled ? 1 : 0
  
                  Behavior on opacity {
-@@ -81,6 +157,39 @@ PageBase {
+@@ -81,6 +247,42 @@ PageBase {
              }
          }
  
@@ -1347,33 +1519,148 @@ index c3f3f5d..5d64273 100644
 +            Repeater {
 +                model: ["", ...WallStudio.screenNames]
 +
-+                ScreenTile {}
++                ScreenTile {
++                    selected: root.target === modelData
++                    onPicked: root.nState.wallTarget = modelData
++                }
 +            }
 +        }
 +
 +        StyledText {
 +            Layout.alignment: Qt.AlignHCenter
 +            Layout.topMargin: -parent.spacing / 2
-+            visible: WallStudio.screenNames.length > 1 && WallStudio.target !== ""
-+            text: `Le fond choisi ne s'applique qu'à ${WallStudio.target} ; les couleurs du thème restent celles du fond commun.`
++            visible: WallStudio.screenNames.length > 1 && root.target !== ""
++            text: `Le fond choisi ne s'applique qu'à ${root.target} ; les couleurs du thème restent celles du fond commun.`
 +            color: Colours.palette.m3outline
 +            font: Tokens.font.label.small
 +        }
 +
 +        IconTextButton {
 +            Layout.alignment: Qt.AlignHCenter
-+            visible: WallStudio.target !== "" && !!WallStudio.screenWalls[WallStudio.target]
++            visible: root.target !== "" && !!WallStudio.screenWalls[root.target]
 +            icon: "link"
-+            text: `Reprendre le fond commun sur ${WallStudio.target}`
++            text: `Reprendre le fond commun sur ${root.target}`
 +            font: Tokens.font.body.small
 +            isRound: true
 +            type: IconTextButton.Text
-+            onClicked: WallStudio.setScreenWall(WallStudio.target, "")
++            onClicked: WallStudio.setScreenWall(root.target, "")
 +        }
 +
          ButtonRow {
              Layout.alignment: Qt.AlignHCenter
              spacing: Tokens.spacing.small
+@@ -136,5 +338,55 @@ PageBase {
+             checked: !Colours.light
+             onToggled: Colours.setMode(checked ? "dark" : "light")
+         }
++
++        // Réglages du studio de fonds d'écran
++        SectionHeader {
++            text: "Fonds animés et transitions"
++        }
++
++        ToggleRow {
++            Layout.topMargin: -parent.spacing
++
++            first: true
++            text: "Lire les fonds animés"
++            subtext: "En pause, un fond animé reste sur une image"
++            checked: PersistentState.wallpaperPlaying
++            onToggled: PersistentState.wallpaperPlaying = checked
++        }
++
++        SelectRow {
++            Layout.topMargin: Tokens.spacing.extraSmall / 2 - parent.spacing
++
++            label: "Qualité des vidéos"
++            subtext: "Adaptée à l'écran : 3 à 4 fois moins de processeur"
++            menuItems: root.qualityItems
++            active: root.qualityItems.find(i => i.value === WallStudio.videoQuality) ?? root.qualityItems[0]
++            onSelected: item => WallStudio.setVideoQuality(item.value)
++        }
++
++        SelectRow {
++            Layout.topMargin: Tokens.spacing.extraSmall / 2 - parent.spacing
++
++            label: "Transition entre deux fonds"
++            subtext: "Le studio (Super+Alt+W, puis Ctrl+T) les propose toutes, avec un aperçu"
++            menuOnTop: true
++            menuItems: root.transitionItems
++            active: root.transitionItems.find(i => i.value === WallStudio.transition) ?? null
++            fallbackIcon: WallStudio.transitionIcon(WallStudio.transition)
++            fallbackText: WallStudio.transitionName(WallStudio.transition)
++            onSelected: item => WallStudio.setTransition(item.value)
++        }
++
++        SelectRow {
++            Layout.topMargin: Tokens.spacing.extraSmall / 2 - parent.spacing
++
++            last: true
++            label: "Diaporama"
++            subtext: "Change le fond commun à intervalle régulier"
++            menuOnTop: true
++            menuItems: root.slideshowItems
++            active: root.slideshowItems.find(i => i.value === WallStudio.slideshowMinutes) ?? root.slideshowItems[0]
++            onSelected: item => WallStudio.setSlideshow(item.value, "")
++        }
+     }
+ }
+diff --git a/modules/notifications/Notification.qml b/modules/notifications/Notification.qml
+index 118cdbe..66c531d 100644
+--- a/modules/notifications/Notification.qml
++++ b/modules/notifications/Notification.qml
+@@ -17,7 +17,9 @@ StyledRect {
+ 
+     required property NotifData modelData
+     readonly property bool hasImage: modelData.image.length > 0
+-    readonly property bool hasAppIcon: modelData.appIcon.length > 0
++    // Source de l'icône de l'appli, "" si elle est inconnue (voir Icons.getNotifAppIcon).
++    readonly property string appIconSource: Icons.getNotifAppIcon(modelData.appIcon)
++    readonly property bool hasAppIcon: appIconSource.length > 0
+     readonly property int bodyTextFormat: /[<*_`#\[\]]/.test(modelData.body) ? Text.MarkdownText : Text.PlainText
+     readonly property int nonAnimHeight: summary.implicitHeight + (root.expanded ? Tokens.spacing.extraSmall * 2 + appName.height + body.height + actions.height + actions.anchors.topMargin : bodyPreview.height) + inner.anchors.margins * 2
+     property bool expanded: Config.notifs.openExpanded
+@@ -165,7 +167,7 @@ StyledRect {
+ 
+                         sourceComponent: ColouredIcon {
+                             anchors.fill: parent
+-                            source: Quickshell.iconPath(root.modelData.appIcon)
++                            source: root.appIconSource
+                             colour: root.modelData.urgency === NotificationUrgency.Critical ? Colours.palette.m3onError : root.modelData.urgency === NotificationUrgency.Low ? Colours.palette.m3onSurface : Colours.palette.m3onSecondaryContainer
+                             layer.enabled: root.modelData.appIcon.endsWith("symbolic")
+                         }
+diff --git a/modules/sidebar/NotifGroup.qml b/modules/sidebar/NotifGroup.qml
+index b2ac4ab..8d6b684 100644
+--- a/modules/sidebar/NotifGroup.qml
++++ b/modules/sidebar/NotifGroup.qml
+@@ -22,7 +22,8 @@ StyledRect {
+     readonly property list<var> activeNotifs: notifs.filter(n => !n.closed)
+     readonly property int notifCount: activeNotifs.length
+     readonly property string image: activeNotifs.find(n => n.image.length > 0)?.image ?? ""
+-    readonly property string appIcon: activeNotifs.find(n => n.appIcon.length > 0)?.appIcon ?? ""
++    // Source de l'icône de l'appli, "" si aucune n'est connue (voir Icons.getNotifAppIcon).
++    readonly property string appIcon: activeNotifs.map(n => Icons.getNotifAppIcon(n.appIcon)).find(s => s.length > 0) ?? ""
+     readonly property int urgency: {
+         if (activeNotifs.find(n => n.urgency === NotificationUrgency.Critical))
+             return NotificationUrgency.Critical;
+@@ -101,7 +102,7 @@ StyledRect {
+ 
+                 ColouredIcon {
+                     implicitSize: Math.round(TokenConfig.sizes.notifs.image * 0.6)
+-                    source: Quickshell.iconPath(root.appIcon)
++                    source: root.appIcon
+                     colour: root.urgency === NotificationUrgency.Critical ? Colours.palette.m3onError : root.urgency === NotificationUrgency.Low ? Colours.palette.m3onSurface : Colours.palette.m3onSecondaryContainer
+                     layer.enabled: root.appIcon.endsWith("symbolic")
+                 }
+@@ -146,7 +147,7 @@ StyledRect {
+                     ColouredIcon {
+                         anchors.centerIn: parent
+                         implicitSize: Math.round(Tokens.sizes.notifs.badge * 0.6)
+-                        source: Quickshell.iconPath(root.appIcon)
++                        source: root.appIcon
+                         colour: root.urgency === NotificationUrgency.Critical ? Colours.palette.m3onError : root.urgency === NotificationUrgency.Low ? Colours.palette.m3onSurface : Colours.palette.m3onSecondaryContainer
+                         layer.enabled: root.appIcon.endsWith("symbolic")
+                     }
 diff --git a/services/Colours.qml b/services/Colours.qml
 index 0b64400..6b1e4a0 100644
 --- a/services/Colours.qml
@@ -1421,18 +1708,59 @@ index 0b64400..6b1e4a0 100644
      }
  
      Timer {
+diff --git a/services/NotifData.qml b/services/NotifData.qml
+index f903dd6..8722ef1 100644
+--- a/services/NotifData.qml
++++ b/services/NotifData.qml
+@@ -145,7 +145,7 @@ QtObject {
+         }
+ 
+         function onImageChanged(): void {
+-            notif.image = notif.notification.image;
++            notif.image = notif.usableImage(notif.notification.image);
+             notif.maybeTriggerDummyImageLoader();
+         }
+ 
+@@ -200,6 +200,16 @@ QtObject {
+         }
+     }
+ 
++    // Image donnée par l'appli. Quand c'est un nom d'icône (Quickshell en fait
++    // « image://icon/nom ») que le thème ne connaît pas, autant dire « pas d'image » : sinon
++    // s'affiche le damier « icône introuvable » à la place de l'icône générique.
++    function usableImage(img: string): string {
++        const prefix = "image://icon/";
++        if (img.startsWith(prefix) && !img.includes("?") && !Quickshell.iconPath(img.slice(prefix.length), true))
++            return "";
++        return img;
++    }
++
+     function maybeTriggerDummyImageLoader(): void {
+         if (image && !image.startsWith("image://icon/") && !image.startsWith(Paths.notifimagecache))
+             dummyImageLoader.active = true;
+@@ -233,7 +243,7 @@ QtObject {
+         body = notification.body;
+         appIcon = notification.appIcon;
+         appName = notification.appName;
+-        image = notification.image;
++        image = usableImage(notification.image);
+         maybeTriggerDummyImageLoader();
+         expireTimeout = notification.expireTimeout;
+         hints = notification.hints;
 diff --git a/services/Wallpapers.qml b/services/Wallpapers.qml
-index 9a8bdac..64ae8f0 100644
+index 9a8bdac..4764c81 100644
 --- a/services/Wallpapers.qml
 +++ b/services/Wallpapers.qml
-@@ -16,11 +16,27 @@ Searcher {
+@@ -16,11 +16,29 @@ Searcher {
      readonly property string fallback: Quickshell.shellPath("assets/wallpaper.webp")
  
      property bool showPreview: false
 -    readonly property string current: showPreview ? previewPath : actualCurrent
 +    // Fond commun affiché : l'aperçu du studio quand il vise tous les écrans, sinon le fond appliqué.
-+    readonly property string current: showPreview && WallStudio.target === "" ? previewPath : actualCurrent
++    readonly property string current: showPreview && previewTarget === "" ? previewPath : actualCurrent
      property string previewPath
++    // Écran visé par l'aperçu ("" : tous les écrans).
++    property string previewTarget
      property string actualCurrent
      property bool previewColourLock
      property bool pendingPreviewClear
@@ -1454,19 +1782,19 @@ index 9a8bdac..64ae8f0 100644
  
      function getCategoryFor(w: FileSystemEntry): string {
          let category = w.parentDir.slice(Paths.wallsdir.length + 1);
-@@ -30,33 +46,66 @@ Searcher {
+@@ -30,33 +48,67 @@ Searcher {
      }
  
      function setRandom(): void {
 -        Quickshell.execDetached(["caelestia", "wallpaper", "-r", ...smartArg]);
-+        WallStudio.shuffle("all");
++        WallStudio.shuffleFor("", "all");
      }
  
-+    // Passe par le studio : écran visé, thème mémorisé pour ce fond, transition choisie.
++    // Fond de tous les écrans. Passe par le studio : thème mémorisé pour ce fond, transition choisie.
      function setWallpaper(path: string): void {
 -        actualCurrent = path;
 -        Quickshell.execDetached(["caelestia", "wallpaper", "-f", path, ...smartArg]);
-+        WallStudio.applyToTarget(path, false);
++        WallStudio.applyTo("", path, false);
 +    }
 +
 +    function stopColourPreview(): void {
@@ -1477,17 +1805,19 @@ index 9a8bdac..64ae8f0 100644
 +            Colours.showPreview = false;
      }
  
-+    // Aperçu sur le bureau du fond `path`, pour la cible du studio.
-     function preview(path: string): void {
-+        if (path !== (showPreview ? previewPath : WallStudio.targetWall))
+-    function preview(path: string): void {
++    // Aperçu sur le bureau du fond `path`, sur l'écran `target` ("" : tous les écrans).
++    function preview(path: string, target = ""): void {
++        if (target !== previewTarget || path !== (showPreview ? previewPath : WallStudio.wallFor(target)))
 +            WallStudio.nextTransition();
          previewPath = path;
++        previewTarget = target;
          showPreview = true;
  
 -        if (Colours.scheme === "dynamic")
 -            getPreviewColoursProc.running = true;
 +        // Les couleurs du thème viennent du fond commun : pas d'aperçu de couleurs pour un seul écran.
-+        if (WallStudio.target !== "") {
++        if (target !== "") {
 +            stopColourPreview();
 +            return;
 +        }
@@ -1512,7 +1842,7 @@ index 9a8bdac..64ae8f0 100644
      }
  
      function stopPreview(): void {
-+        if (showPreview && previewPath !== WallStudio.targetWall)
++        if (showPreview && previewPath !== WallStudio.wallFor(previewTarget))
 +            WallStudio.nextTransition();
          showPreview = false;
 -        if (previewColourLock)
@@ -1531,7 +1861,7 @@ index 9a8bdac..64ae8f0 100644
      }
  
      list: wallpapers.entries
-@@ -71,8 +120,9 @@ Searcher {
+@@ -71,8 +123,9 @@ Searcher {
              return root.actualCurrent;
          }
  
@@ -1542,7 +1872,7 @@ index 9a8bdac..64ae8f0 100644
          }
  
          function list(): string {
-@@ -114,9 +164,26 @@ Searcher {
+@@ -114,9 +167,26 @@ Searcher {
      Process {
          id: getPreviewColoursProc
  
@@ -1606,3 +1936,26 @@ index 060fbef..460b674 100644
      Lock {
          id: lock
      }
+diff --git a/utils/Icons.qml b/utils/Icons.qml
+index a86f662..48f026d 100644
+--- a/utils/Icons.qml
++++ b/utils/Icons.qml
+@@ -188,6 +188,18 @@ Singleton {
+         return weatherIcons[code] ?? "air";
+     }
+ 
++    // Icône d'appli d'une notification, telle que l'appli l'envoie : un nom du thème d'icônes,
++    // un chemin ou une adresse file:// (la spécification des notifications permet les trois).
++    // Renvoie une source d'image, ou "" si le thème ne connaît pas ce nom : l'appelant affiche
++    // alors l'icône générique, plutôt que le damier « icône introuvable » de Quickshell.
++    function getNotifAppIcon(icon: string): string {
++        if (!icon)
++            return "";
++        if (icon.startsWith("/") || icon.startsWith("file://"))
++            return Qt.resolvedUrl(icon);
++        return Quickshell.iconPath(icon, true);
++    }
++
+     function getNotifIcon(summary: string, urgency: int): string {
+         const fallback = urgency === NotificationUrgency.Critical ? "release_alert" : "chat";
+         return matchIcon(summary.toLowerCase(), notifIconRules, fallback);
