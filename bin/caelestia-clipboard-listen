@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Écoute le presse-papiers (texte et images) pour l'historique du shell.
+set -Eeuo pipefail
+
+store="$HOME/.local/bin/caelestia-clipboard-store"
+pids=()
+
+cleanup() {
+    trap - EXIT INT TERM
+    if ((${#pids[@]})); then
+        kill "${pids[@]}" >/dev/null 2>&1 || true
+        wait "${pids[@]}" 2>/dev/null || true
+    fi
+}
+trap cleanup EXIT
+trap 'exit 0' INT TERM
+
+wl-paste --type text --watch "$store" &
+pids+=("$!")
+wl-paste --type image --watch "$store" &
+pids+=("$!")
+
+# Si un des deux s'arrête, systemd relance l'ensemble.
+wait -n "${pids[@]}"

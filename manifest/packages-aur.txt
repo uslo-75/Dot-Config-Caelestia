@@ -1,4 +1,2 @@
-clipse
-clipse-gui
-mpvpaper
-waypaper
+caelestia-shell-git
+caelestia-cli-git

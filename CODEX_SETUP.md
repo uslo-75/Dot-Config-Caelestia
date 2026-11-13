@@ -8,7 +8,7 @@ Objectif : reproduire cet environnement sur un PC Arch disposant déjà de Caele
 2. Cloner ce dépôt dans un dossier de travail propre. Pour un dépôt privé, authentifier d'abord `gh` avec `gh auth login`.
 3. Exécuter `./install.sh --dry-run` et lire entièrement le résumé. Ne jamais ajouter manuellement `monitors.conf`, `workspaces.conf` ou `~/.config/caelestia/monitors`, ni versionner `hypr-monitors.lua` (réglages d'écran propres à la machine, créé par l'installeur).
 4. Exécuter `./scripts/validate.sh`, puis `./install.sh`. Autoriser `sudo pacman` et `yay` uniquement pour les paquets explicitement listés dans `manifest/packages-*.txt`.
-5. Si le patch QML est refusé, ne pas utiliser `patch --force` et ne pas remplacer tout Caelestia. Comparer la version installée avec `patches/caelestia-shell-2.5.0.patch`, porter les mêmes comportements sur la nouvelle version, puis relancer les validations.
+5. Si le patch QML est refusé, ne pas utiliser `patch --force` et ne pas remplacer tout Caelestia. Comparer la version installée avec `patches/caelestia-shell-main.patch`, porter les mêmes comportements sur la nouvelle version, puis relancer les validations.
 6. Vérifier les commandes de la section suivante avant de déclarer l'installation terminée.
 7. Ne jamais demander, journaliser ou écrire le mot de passe du compte. SDDM n'en a pas besoin pour l'autologin.
 
@@ -17,15 +17,10 @@ Objectif : reproduire cet environnement sur un PC Arch disposant déjà de Caele
 ```bash
 systemctl --user is-enabled \
   caelestia-cache-maintain.timer \
-  caelestia-wallpaper-thumbs-watch.service \
-  mpvpaper-guard.service \
-  clipse-listen-safe.service \
-  clipse-maintain.timer \
-  clipse-history-snapshot.timer \
-  clipse-theme-watch.service \
+  caelestia-clipboard.service \
   protonmail-tray.service
 
-~/.local/bin/cg-open --status
+~/.local/bin/caelestia-wallpaper-cache status
 test -d ~/Images/wallpapers
 test -d ~/Images/Profils
 hyprctl binds | rg 'SUPER.*(V|T|W)'
@@ -35,10 +30,8 @@ sudo rg -n 'User=uslo|Session=hyprland' /etc/sddm.conf.d/99-caelestia-autologin.
 
 Valider ensuite manuellement :
 
-- `Super+V` ouvre Clipse GUI et le referme au second appui ;
-- `Super+Alt+V` ouvre aussi Clipse GUI ;
-- `Super+Alt+X` ouvre Waypaper ;
-- une image et une vidéo peuvent être sélectionnées sans écran noir, avec un fondu dans les deux sens ;
+- `Super+V` ouvre l'historique du presse-papiers et le referme au second appui ; `Entrée` colle ;
+- `Super+Alt+W` ouvre le studio de fonds ; une image et une vidéo s'appliquent avec une transition ;
 - la miniature vidéo et le thème dynamique suivent le fond choisi ;
 - les workspaces AZERTY fonctionnent ;
 - la disposition, la fréquence et l'échelle des écrans n'ont pas changé.
@@ -53,4 +46,4 @@ En cas d'échec, exécuter `./restore.sh`. Sans argument, il choisit la sauvegar
 ./restore.sh ~/.local/state/caelestia-portable/backups/AAAAmmjj-HHMMSS
 ```
 
-Ne jamais recopier les caches, l'historique Clipse ou les anciens fichiers `*.bak*` depuis la machine source.
+Ne jamais recopier les caches, l'historique du presse-papiers (cliphist, épingles) ou les anciens fichiers `*.bak*` depuis la machine source.

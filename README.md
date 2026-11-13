@@ -2,7 +2,20 @@
 
 Overlay portable de la configuration Caelestia/Hyprland de `uslo-75` pour Arch Linux.
 
-Il installe les personnalisations utiles sans recopier la configuration matérielle des écrans : raccourcis AZERTY, intégration Clipse sérialisée et sauvegardée pour `Super+V`, gestion des fonds d'écran statiques et animés avec Waypaper/mpvpaper (fondus image/vidéo, copies vidéo à la résolution de l'écran), thèmes dynamiques, icône Proton Mail dans la barre, services de maintenance et images de profil.
+Il installe les personnalisations utiles sans recopier la configuration matérielle des écrans : raccourcis AZERTY, studio de fonds d'écran et historique du presse-papiers intégrés au shell, thèmes dynamiques mémorisés par fond, icône Proton Mail dans la barre, services de maintenance et images de profil.
+
+## Studio de fonds d'écran (`Super+Alt+W`)
+
+- Images et vidéos lues nativement par Caelestia (branche `main`, paquet `caelestia-shell-git`), avec ses transitions shader : une transition fixe ou « Aléatoire » (16 effets doux tirés à chaque changement). Le sélecteur (`Ctrl+T`) montre chaque effet en miniature et l'anime au survol.
+- Carrousel 3D avec mini-clip sur la carte sélectionnée et aperçu en direct sur le bureau (fond, transition et couleurs) pendant la navigation.
+- Filtres Tous / Images / Animés / Favoris (`Tab`), favoris (`Ctrl+D`), carte au hasard (`Ctrl+R`), lecture/pause (`Ctrl+P`), diaporama (5 min à 1 h), qualité vidéo.
+- Couleurs mémorisées par fond (`Ctrl+M`) : mode et variante, avec les pastilles réelles de chaque variante pour ce fond, appliqués en une seule passe (`caelestia-wallpaper-apply`).
+- `caelestia-wallpaper-cache` prépare en arrière-plan des copies à la hauteur de l'écran (4K → 1080p, environ 4× moins de CPU), des aperçus de 6 s et les métadonnées (`~/.cache/caelestia/wallpaper-video/index.json`).
+- La vidéo se met en pause, lecteur déchargé, quand une fenêtre plein écran ou le mode jeu couvre l'écran.
+
+## Presse-papiers (`Super+V`)
+
+Historique `cliphist` dans le launcher : groupé par jour avec l'heure et l'appli d'origine, aperçu texte/code, images, liens et couleurs, recherche, épingles (`Ctrl+P`), suppression (`Suppr`), pause de l'historique (`Ctrl+S`). `Entrée` colle directement dans l'appli active (`Ctrl+Maj+V` dans les terminaux), `Maj+Entrée` copie seulement. Les contenus marqués sensibles par les gestionnaires de mots de passe ne sont pas enregistrés.
 
 ## Installation rapide
 
@@ -20,7 +33,7 @@ Par défaut, l'installeur :
 - installe les dépendances manquantes avec `pacman` et `yay` ;
 - sauvegarde chaque élément remplacé sous `~/.local/state/caelestia-portable/backups/` ;
 - applique l'overlay Caelestia/Hyprland et les correctifs QML ;
-- conserve les réglages et états existants de Caelestia, Waypaper et Clipse lors d'une réinstallation ;
+- conserve les réglages et états existants de Caelestia (favoris, couleurs par fond, épingles) et migre une ancienne installation Waypaper/mpvpaper/Clipse (sauvegardée) ;
 - installe les dix images de profil dans `~/Images/Profils` ;
 - conserve la photo existante ou utilise `Sylvie.png` si `~/.face` est absent ;
 - télécharge et vérifie l'archive `wallpapers-v1` depuis GitHub Releases ;
@@ -60,15 +73,13 @@ Validation locale complète :
 | `Super+Alt` + rangée AZERTY | Déplacer la fenêtre vers le workspace |
 | `Super+T` | Kitty |
 | `Super+W` | Zen Browser |
-| `Super+V` | Ouvrir/fermer Clipse GUI |
-| `Super+Alt+V` | Ouvrir/fermer Clipse GUI (raccourci secondaire) |
-| `Super+Alt+W` | Menu de fonds d'écran |
-| `Super+Alt+X` | Interface Waypaper |
-| `Super+Alt+C` | Mode/variante du thème courant, qualité des fonds vidéo (auto ou source 4K) |
+| `Super+V` / `Super+Alt+V` | Ouvrir/fermer l'historique du presse-papiers |
+| `Ctrl+Maj+Alt+V` | Coller le dernier élément copié |
+| `Super+Alt+W` / `X` / `C` | Ouvrir/fermer le studio de fonds d'écran |
 
 ## Compatibilité et sécurité
 
-Les correctifs QML sont basés sur Caelestia Shell 2.5.0 (tag `v2.5.0`) et Quickshell 0.3.2. Ils sont testés avant application ; une version incompatible provoque un arrêt sans écraser les fichiers QML.
+Les correctifs QML (`patches/caelestia-shell-main.patch` + fichiers ajoutés dans `overlay/`) sont basés sur Caelestia Shell `main` (commit `f80a980`, paquets `caelestia-shell-git` et `caelestia-cli-git`) et Quickshell 0.3.2. Ils sont testés avant application ; une version incompatible provoque un arrêt sans écraser les fichiers QML.
 
 Le dépôt exclut volontairement les configurations `monitor`, caches, logs, historiques du presse-papiers, fichiers d'état contenant des chemins absolus et sauvegardes locales. Les règles d'écran de chaque machine vivent dans `~/.config/caelestia/hypr-monitors.lua`, chargé par `hypr-user.lua` s'il existe : lors d'une réinstallation, l'installeur y déplace les `hl.monitor` présents dans l'ancien `hypr-user.lua` avant de le remplacer.
 

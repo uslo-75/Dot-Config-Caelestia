@@ -1,0 +1,148 @@
+#!/usr/bin/env python3
+"""Applique un fond d'écran avec, en option, un mode/une variante de thème forcés.
+
+`caelestia wallpaper -f` puis `caelestia scheme set` régénèrent le thème deux fois : avec un
+mode forcé différent du mode « intelligent », l'interface passerait brièvement par le mauvais
+mode. Ici tout est fait en une seule passe avec la bibliothèque de caelestia-cli. Si son API
+interne change, on se replie sur les deux commandes publiques.
+
+Usage :
+  caelestia-wallpaper-apply FOND [--mode auto|dark|light] [--variant auto|VARIANTE] [--no-smart]
+  caelestia-wallpaper-apply --print FOND [...]              # schéma prévisualisé, sans rien modifier
+  caelestia-wallpaper-apply --print --variants FOND [...]   # pastilles de toutes les variantes
+"""
+
+import argparse
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+MODES = {"dark", "light"}
+VARIANTS = {"tonalspot", "vibrant", "expressive", "fidelity", "fruitsalad", "monochrome", "neutral", "rainbow", "content"}
+
+
+def forced(args) -> tuple[str | None, str | None]:
+    return (args.mode if args.mode in MODES else None, args.variant if args.variant in VARIANTS else None)
+
+
+def fallback(args) -> int:
+    wall = str(args.wallpaper)
+    if args.print:
+        cmd = ["caelestia", "wallpaper", "-p", wall]
+        if not args.smart:
+            cmd.append("--no-smart")
+        return subprocess.run(cmd).returncode
+
+    cmd = ["caelestia", "wallpaper", "-f", wall]
+    if not args.smart:
+        cmd.append("--no-smart")
+    rc = subprocess.run(cmd).returncode
+    mode, variant = forced(args)
+    extra = (["-m", mode] if mode else []) + (["-v", variant] if variant else [])
+    if rc == 0 and extra:
+        rc = subprocess.run(["caelestia", "scheme", "set", "-n", "dynamic", *extra]).returncode
+    return rc
+
+
+def cached_source(W, wall: Path) -> tuple[Path, Path]:
+    """Image utilisée par la CLI pour les couleurs (1re image des vidéos/GIF) et son dossier de cache."""
+    is_animated = getattr(W, "is_animated", None)
+    extract = getattr(W, "extract_first_frame", None)
+    if is_animated and extract and is_animated(wall):
+        source = extract(wall)
+    elif wall.suffix.lower() == ".gif" and hasattr(W, "convert_gif"):
+        source = W.convert_gif(wall)
+    else:
+        source = wall
+    return source, W.wallpapers_cache_dir / W.compute_hash(source)
+
+
+def preview_scheme(W, Scheme, base, source: Path, cache: Path, mode: str, variant: str) -> dict:
+    from caelestia.utils.material import get_colours_for_image
+
+    preview = Scheme({"name": "dynamic", "flavour": base.flavour, "mode": mode, "variant": variant,
+                      "colours": base.colours})
+    colours = get_colours_for_image(W.get_thumb(source, cache), preview)
+    return {"name": "dynamic", "flavour": base.flavour, "mode": mode, "variant": variant, "colours": colours}
+
+
+def print_variants(W, Scheme, scheme, args) -> int:
+    source, cache = cached_source(W, args.wallpaper)
+    mode = args.mode if args.mode in MODES else None
+    smart = {}
+    if args.smart:
+        try:
+            smart = W.get_smart_opts(source, cache)
+        except Exception:
+            smart = {}
+    mode = mode or smart.get("mode") or scheme.mode
+    keys = ("primary", "secondary", "tertiary", "primaryContainer", "surfaceContainer", "onSurface")
+    out = {"tag": args.tag, "mode": mode, "smartVariant": smart.get("variant") or scheme.variant, "variants": {}}
+    for variant in sorted(VARIANTS):
+        colours = preview_scheme(W, Scheme, scheme, source, cache, mode, variant)["colours"]
+        out["variants"][variant] = {k: colours.get(k) for k in keys}
+    print(json.dumps(out))
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("wallpaper", type=Path)
+    parser.add_argument("--mode", default="auto")
+    parser.add_argument("--variant", default="auto")
+    parser.add_argument("--no-smart", dest="smart", action="store_false")
+    parser.add_argument("--print", action="store_true", help="affiche le schéma prévisualisé")
+    parser.add_argument("--variants", action="store_true", help="avec --print : pastilles de toutes les variantes")
+    parser.add_argument("--tag", default="", help="renvoyé tel quel dans la sortie de --variants")
+    args = parser.parse_args()
+    args.wallpaper = args.wallpaper.expanduser().resolve()
+
+    try:
+        from caelestia.utils import wallpaper as W
+        from caelestia.utils.scheme import Scheme, get_scheme
+    except Exception:
+        return 1 if args.variants else fallback(args)
+
+    mode, variant = forced(args)
+
+    try:
+        scheme = get_scheme()
+        if args.print and args.variants:
+            return print_variants(W, Scheme, scheme, args)
+
+        if scheme.name != "dynamic" or (not mode and not variant):
+            # Aucun réglage forcé : comportement exact de `caelestia wallpaper`.
+            if args.print:
+                print(json.dumps(W.get_colours_for_wall(args.wallpaper, not args.smart)))
+            else:
+                W.set_wallpaper(args.wallpaper, not args.smart)
+            return 0
+
+        source, cache = cached_source(W, args.wallpaper)
+        if (not mode or not variant) and args.smart:
+            smart = W.get_smart_opts(source, cache)
+            mode = mode or smart.get("mode")
+            variant = variant or smart.get("variant")
+        mode = mode or scheme.mode
+        variant = variant or scheme.variant
+
+        if args.print:
+            print(json.dumps(preview_scheme(W, Scheme, scheme, source, cache, mode, variant)))
+            return 0
+
+        # Valeurs posées sans sauvegarde : set_wallpaper (sans « smart ») ne génère et
+        # n'écrit le thème qu'une seule fois, directement dans le bon mode.
+        scheme._mode = mode
+        scheme._variant = variant
+        W.set_wallpaper(args.wallpaper, True)
+        return 0
+    except (AttributeError, TypeError, ImportError):
+        return 1 if args.variants else fallback(args)
+    except ValueError as exc:
+        print(f"caelestia-wallpaper-apply: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

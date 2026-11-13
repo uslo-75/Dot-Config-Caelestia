@@ -1,19 +1,53 @@
 {
   "appearance": {
-    "anim": { "durations": { "scale": 0.85 } },
-    "padding": { "scale": 1 },
-    "rounding": { "scale": 1.05 },
-    "spacing": { "scale": 1 },
-    "transparency": { "base": 0.92, "enabled": true, "layers": 0.55 }
+    "anim": {
+      "durations": {
+        "scale": 0.85
+      }
+    },
+    "padding": {
+      "scale": 1
+    },
+    "rounding": {
+      "scale": 1.05
+    },
+    "spacing": {
+      "scale": 1
+    },
+    "transparency": {
+      "base": 0.92,
+      "enabled": true,
+      "layers": 0.55
+    }
   },
-  "background": { "enabled": true, "wallpaperEnabled": true },
+  "background": {
+    "enabled": true,
+    "wallpaperEnabled": true
+  },
   "bar": {
-    "activeWindow": { "compact": true, "inverted": false, "showOnHover": true },
-    "clock": { "background": false, "showDate": false, "showIcon": true },
+    "activeWindow": {
+      "compact": true,
+      "inverted": false,
+      "showOnHover": true
+    },
+    "clock": {
+      "background": false,
+      "showDate": false,
+      "showIcon": true
+    },
     "persistent": true,
-    "popouts": { "tray": true },
-    "scrollActions": { "brightness": true },
-    "tray": { "background": false, "compact": false, "hiddenIcons": [], "recolour": false },
+    "popouts": {
+      "tray": true
+    },
+    "scrollActions": {
+      "brightness": true
+    },
+    "tray": {
+      "background": false,
+      "compact": false,
+      "hiddenIcons": [],
+      "recolour": false
+    },
     "workspaces": {
       "activeIndicator": true,
       "activeTrail": false,
@@ -25,17 +59,43 @@
       "shown": 8
     }
   },
-  "dashboard": { "enabled": true, "showDashboard": true, "showOnHover": true },
-  "general": { "apps": { "explorer": ["thunar"], "terminal": ["kitty"] } },
+  "dashboard": {
+    "enabled": true,
+    "showDashboard": true,
+    "showOnHover": true
+  },
+  "general": {
+    "apps": {
+      "explorer": [
+        "thunar"
+      ],
+      "terminal": [
+        "kitty"
+      ]
+    }
+  },
   "launcher": {
     "enabled": true,
-    "favouriteApps": ["com.github.th-ch.youtube-music.desktop"],
+    "favouriteApps": [
+      "com.github.th-ch.youtube-music.desktop"
+    ],
     "maxShown": 7,
     "showOnHover": false,
-    "useFuzzy": { "apps": true, "wallpapers": true },
+    "useFuzzy": {
+      "apps": true,
+      "wallpapers": true
+    },
     "vimKeybinds": false
   },
-  "paths": { "wallpaperDir": "~/Images/wallpapers" },
-  "services": { "defaultPlayer": "YouTube Music", "smartScheme": false },
-  "sidebar": { "dragThreshold": 80, "enabled": true }
+  "paths": {
+    "wallpaperDir": "~/Images/wallpapers"
+  },
+  "services": {
+    "defaultPlayer": "YouTube Music",
+    "smartScheme": true
+  },
+  "sidebar": {
+    "dragThreshold": 80,
+    "enabled": true
+  }
 }

@@ -1,9 +1,7 @@
 adw-gtk-theme
+cliphist
 curl
 ffmpeg
-ffmpegthumbnailer
-fuzzel
-imagemagick
 inotify-tools
 jq
 libayatana-appindicator
@@ -14,9 +12,9 @@ patch
 procps-ng
 python
 python-gobject
+qt6-multimedia-ffmpeg
 ripgrep
 rsync
-socat
 util-linux
 vulkan-tools
 wl-clipboard

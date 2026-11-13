@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Enregistre le presse-papiers dans cliphist (appelé par wl-paste --watch, contenu sur stdin).
+# cliphist ignore déjà les contenus marqués sensibles (CLIPBOARD_STATE=sensitive, gestionnaires
+# de mots de passe). Ce script ajoute la pause de l'historique et note l'heure + l'appli d'origine.
+set -u
+
+runtime="${XDG_RUNTIME_DIR:-/tmp}"
+state="${XDG_STATE_HOME:-$HOME/.local/state}/caelestia/clipboard"
+meta="$state/meta.tsv"
+
+if [[ -e "$runtime/caelestia-clipboard-paused" ]]; then
+    cat >/dev/null
+    exit 0
+fi
+
+mkdir -p "$state"
+exec 9>"$runtime/caelestia-clipboard-store.lock"
+flock -w 5 9 || exit 0
+
+newest() {
+    cliphist list 2>/dev/null | head -n 1 | cut -f1
+}
+
+before="$(newest)"
+cliphist store || exit $?
+after="$(newest)"
+
+if [[ -n "$after" && "$after" != "$before" ]]; then
+    app="$(hyprctl activewindow -j 2>/dev/null | jq -r '.class // empty' 2>/dev/null)"
+    printf '%s\t%s\t%s\n' "$after" "$(date +%s)" "${app//$'\t'/ }" >>"$meta"
+    if (($(wc -l <"$meta") > 3000)); then
+        tail -n 2000 "$meta" >"$meta.tmp" && mv -f "$meta.tmp" "$meta"
+    fi
+fi
+exit 0

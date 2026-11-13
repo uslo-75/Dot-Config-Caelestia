@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+shopt -s globstar
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
@@ -26,7 +27,7 @@ for path in sorted(Path("bin").iterdir()):
 PY
 
 printf '[3/7] JSON\n'
-for file in dotfiles/caelestia/*.json dotfiles/clipse/*.json; do
+for file in dotfiles/caelestia/*.json; do
     jq empty "$file"
 done
 
@@ -44,7 +45,14 @@ printf '[5/7] Patch QML\n'
 tmp="$(mktemp -d)"
 trap 'rm -rf -- "$tmp"' EXIT
 rsync -rlt /etc/xdg/quickshell/caelestia/ "$tmp/"
-patch --dry-run --forward --batch --fuzz=0 -p1 -d "$tmp" < patches/caelestia-shell-2.5.0.patch >/dev/null
+if [[ -d /usr/lib/qt6/qml/Caelestia/Multimedia ]]; then
+    patch --dry-run --forward --batch --fuzz=0 -p1 -d "$tmp" < patches/caelestia-shell-main.patch >/dev/null
+else
+    printf 'Avertissement: caelestia-shell-git (vidéos natives) absent, patch non testé.\n'
+fi
+for file in overlay/quickshell/caelestia/**/*.qml; do
+    [[ -f "$file" ]] && rg -q '^(import|pragma)' "$file"
+done
 
 printf '[6/7] Portabilité et confidentialité\n'
 source_home='/home/'"uslo"
@@ -53,7 +61,7 @@ if rg -n -F "$source_home" . -g '!.git/**' -g '!dist/**'; then
     exit 1
 fi
 if find . -path './.git' -prune -o -path './dist' -prune -o -type f \
-    \( -name '*.bak*' -o -name '*.log' -o -name 'clipboard_history.json' -o -name 'monitors.conf' -o -name 'hypr-monitors.lua' -o -name 'workspaces.conf' -o -name 'waypaper-current' \) \
+    \( -name '*.bak*' -o -name '*.log' -o -name 'clipboard_history.json' -o -name 'monitors.conf' -o -name 'hypr-monitors.lua' -o -name 'workspaces.conf' -o -name 'wallstudio.json' -o -name 'pins.json' -o -name 'meta.tsv' \) \
     -print -quit | rg -q .; then
     printf 'Fichier d’état interdit détecté.\n' >&2
     exit 1

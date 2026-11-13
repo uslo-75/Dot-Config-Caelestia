@@ -1,0 +1,835 @@
+diff --git a/components/widgets/WallpaperImpl.qml b/components/widgets/WallpaperImpl.qml
+index 6229874..4b5b39f 100644
+--- a/components/widgets/WallpaperImpl.qml
++++ b/components/widgets/WallpaperImpl.qml
+@@ -9,7 +9,12 @@ import qs.services
+ Item {
+     id: root
+ 
++    // Transition demandée par le studio (aléatoire ou fixe), sinon celle de la config.
+     readonly property transitionShader shader: {
++        const studio = WallStudio.activeTransition;
++        if (studio && Shaders[studio])
++            return Shaders[studio];
++
+         CUtils.dependency(Config.background.wallpaperTransition);
+         let transition = CUtils.enumToString(Config.background, "wallpaperTransition");
+         if (!transition)
+@@ -18,12 +23,37 @@ Item {
+         transition = transition[0].toLowerCase() + transition.slice(1);
+         return Shaders[transition] ?? Shaders.crossfade;
+     }
++    // Figée au début de chaque transition : en changer pendant qu'elle joue ne fait pas de saut.
++    property transitionShader runningShader: Shaders.crossfade
+ 
+     property string source: Wallpapers.current
++    // Fichier réellement lu : copie à la taille de l'écran pour les vidéos plus grandes que lui.
++    // Pendant la navigation dans le studio, l'affiche suffit : créer un lecteur vidéo à chaque
++    // cran bloquerait l'interface. La vidéo démarre une fois le fond appliqué.
++    readonly property bool stillOnly: Wallpapers.showPreview && WallStudio.isVideo(source) && WallStudio.posterFor(source) !== ""
++    readonly property string playable: stillOnly ? WallStudio.posterFor(source) : WallStudio.playableFor(source)
++    property string lastSource
++    // Pause automatique (plein écran, jeu) en plus de la pause manuelle.
++    property bool autoPaused
+     property ShaderEffectSource currentCapture: capture1
+     property real transitionProgress: 1
+ 
+-    onSourceChanged: {
++    function beginTransition(capture: ShaderEffectSource): void {
++        capture.visible = false;
++        transition.from = capture;
++        // Même fond (affiche -> vidéo) : simple fondu rapide, l'image est identique.
++        runningShader = upgrade ? Shaders.crossfade : shader;
++        transitionProgress = 0;
++        live.source = playable;
++        if (live.ready)
++            transitionAnim.start();
++    }
++
++    property bool upgrade
++
++    onPlayableChanged: {
++        upgrade = source === lastSource;
++        lastSource = source;
+         transitionAnim.stop();
+ 
+         if (transitionProgress < 1) {
+@@ -37,14 +67,18 @@ Item {
+         currentCapture.scheduleUpdate();
+     }
+ 
+-    Component.onCompleted: live.source = source
++    Component.onCompleted: {
++        lastSource = source;
++        runningShader = shader;
++        live.source = playable;
++    }
+ 
+     NumberAnimation on transitionProgress {
+         id: transitionAnim
+ 
+         running: false
+-        duration: root.shader.duration * Tokens.anim.durations.scale
+-        easing: root.shader.easing
++        duration: root.runningShader.duration * Tokens.anim.durations.scale
++        easing: root.runningShader.easing
+         to: 1
+     }
+ 
+@@ -55,14 +89,7 @@ Item {
+         live: false
+         visible: false
+ 
+-        onScheduledUpdateCompleted: {
+-            visible = false;
+-            transition.from = this;
+-            root.transitionProgress = 0;
+-            live.source = root.source;
+-            if (live.ready)
+-                transitionAnim.start();
+-        }
++        onScheduledUpdateCompleted: root.beginTransition(this)
+     }
+ 
+     ShaderEffectSource {
+@@ -72,26 +99,19 @@ Item {
+         live: false
+         visible: false
+ 
+-        onScheduledUpdateCompleted: {
+-            visible = false;
+-            transition.from = this;
+-            root.transitionProgress = 0;
+-            live.source = root.source;
+-            if (live.ready)
+-                transitionAnim.start();
+-        }
++        onScheduledUpdateCompleted: root.beginTransition(this)
+     }
+ 
+     Visual {
+         id: live
+ 
+         anchors.fill: parent
+-        playing: PersistentState.wallpaperPlaying
++        playing: PersistentState.wallpaperPlaying && !root.autoPaused
+         animate: false
+         layer.enabled: true
+ 
+         onReadyChanged: {
+-            if (ready && source === root.source)
++            if (ready && source === root.playable)
+                 transitionAnim.start();
+         }
+     }
+@@ -105,6 +125,6 @@ Item {
+ 
+         anchors.fill: parent
+         visible: root.transitionProgress < 1
+-        fragmentShader: root.shader.url
++        fragmentShader: root.runningShader.url
+     }
+ }
+diff --git a/daemons/Shortcuts.qml b/daemons/Shortcuts.qml
+index adc4e4c..de99022 100644
+--- a/daemons/Shortcuts.qml
++++ b/daemons/Shortcuts.qml
+@@ -11,7 +11,28 @@ Scope {
+     id: root
+ 
+     property bool launcherInterrupted
+-    readonly property bool hasFullscreen: Hypr.focusedWorkspace?.toplevels.values.some(t => t.lastIpcObject.fullscreen > 1) ?? false
++    readonly property bool hasFullscreen: Hypr.focusedWorkspace?.toplevels.values.some(t => (t.lastIpcObject?.fullscreen ?? 0) > 1) ?? false
++
++    // Ouvre le launcher dans un mode (studio de fonds, presse-papiers) ; referme s'il y est déjà.
++    function toggleLauncherMode(mode: string): void {
++        const screenState = ShellState.forActive();
++        if (!screenState || root.hasFullscreen)
++            return;
++        if (screenState.launcher && LauncherState.mode === mode) {
++            screenState.launcher = false;
++            return;
++        }
++        LauncherState.open(mode);
++        screenState.launcher = true;
++    }
++
++    function openLauncherMode(mode: string): void {
++        const screenState = ShellState.forActive();
++        if (!screenState || root.hasFullscreen)
++            return;
++        LauncherState.open(mode);
++        screenState.launcher = true;
++    }
+ 
+     // qmllint disable unresolved-type
+     CustomShortcut {
+@@ -75,6 +96,22 @@ Scope {
+         }
+     }
+ 
++    // qmllint disable unresolved-type
++    CustomShortcut {
++        // qmllint enable unresolved-type
++        name: "wallpapers"
++        description: "Toggle the wallpaper studio"
++        onPressed: root.toggleLauncherMode("wallpapers")
++    }
++
++    // qmllint disable unresolved-type
++    CustomShortcut {
++        // qmllint enable unresolved-type
++        name: "clipboard"
++        description: "Toggle the clipboard history"
++        onPressed: root.toggleLauncherMode("clipboard")
++    }
++
+     // qmllint disable unresolved-type
+     CustomShortcut {
+         // qmllint enable unresolved-type
+@@ -144,6 +181,41 @@ Scope {
+         target: "nexus"
+     }
+ 
++    IpcHandler {
++        function toggle(): void {
++            const screenState = ShellState.forActive();
++            if (!screenState || (root.hasFullscreen && !screenState.launcher))
++                return;
++            if (!screenState.launcher)
++                LauncherState.open("");
++            screenState.launcher = !screenState.launcher;
++        }
++
++        function openWallpapers(): void {
++            root.openLauncherMode("wallpapers");
++        }
++
++        function toggleWallpapers(): void {
++            root.toggleLauncherMode("wallpapers");
++        }
++
++        function openClipboard(): void {
++            root.openLauncherMode("clipboard");
++        }
++
++        function toggleClipboard(): void {
++            root.toggleLauncherMode("clipboard");
++        }
++
++        function close(): void {
++            const screenState = ShellState.forActive();
++            if (screenState)
++                screenState.launcher = false;
++        }
++
++        target: "launcher"
++    }
++
+     IpcHandler {
+         function info(title: string, message: string, icon: string): void {
+             Toaster.toast(title, message, icon, Toast.Info);
+diff --git a/modules/background/Background.qml b/modules/background/Background.qml
+index 9730f62..b9bd1f3 100644
+--- a/modules/background/Background.qml
++++ b/modules/background/Background.qml
+@@ -47,7 +47,9 @@ Variants {
+                 anchors.fill: parent
+                 active: Config.background.wallpaperEnabled
+ 
+-                sourceComponent: Wallpaper {}
++                sourceComponent: Wallpaper {
++                    screen: win.modelData
++                }
+             }
+ 
+             Visualiser {
+diff --git a/modules/background/Wallpaper.qml b/modules/background/Wallpaper.qml
+index 0f6363e..7bd5f6c 100644
+--- a/modules/background/Wallpaper.qml
++++ b/modules/background/Wallpaper.qml
+@@ -1,8 +1,11 @@
+ pragma ComponentBehavior: Bound
+ 
+ import QtQuick
++import Quickshell
++import Quickshell.Hyprland
+ import Caelestia.Config
+ import Caelestia.I18n
++import Caelestia.State
+ import qs.components
+ import qs.components.filedialog
+ import qs.components.widgets
+@@ -12,8 +15,22 @@ import qs.utils
+ Item {
+     id: root
+ 
++    property ShellScreen screen
+     property bool completed
+ 
++    // Une fenêtre plein écran (ou agrandie) couvre ce fond : inutile de décoder la vidéo.
++    readonly property HyprlandMonitor monitor: screen ? Hypr.monitorFor(screen) : null
++    readonly property bool covered: {
++        const mon = monitor;
++        if (!mon)
++            return false;
++        const covers = ws => ws?.toplevels.values.some(t => (t.lastIpcObject?.fullscreen ?? 0) > 0) ?? false;
++        const special = mon.lastIpcObject?.specialWorkspace?.name;
++        if (special && covers(Hypr.workspaces.values.find(w => w.name === special)))
++            return true;
++        return covers(mon.activeWorkspace);
++    }
++
+     Component.onCompleted: completed = true
+ 
+     Loader {
+@@ -86,5 +103,6 @@ Item {
+         id: impl
+ 
+         anchors.fill: parent
++        autoPaused: root.covered || RuntimeState.gameMode
+     }
+ }
+diff --git a/modules/bar/components/Tray.qml b/modules/bar/components/Tray.qml
+index de9aa95..75c7092 100644
+--- a/modules/bar/components/Tray.qml
++++ b/modules/bar/components/Tray.qml
+@@ -18,6 +18,23 @@ StyledRect {
+     readonly property int spacing: Config.bar.tray.background ? Tokens.spacing.medium : Tokens.spacing.extraSmall
+ 
+     property bool expanded
++    readonly property list<var> visibleTrayItems: SystemTray.items.values.filter(i => i.status !== Status.Passive && !GlobalConfig.bar.tray.hiddenIcons.includes(i.id))
++
++    function trayEndWeight(item) {
++        const id = String(item?.id ?? "").toLowerCase();
++        if (id.includes("pin"))
++            return 2;
++        if (id.includes("protonmail"))
++            return 1;
++        return 0;
++    }
++
++    function orderedTrayItems(items) {
++        return items
++            .map((item, index) => ({ item, index }))
++            .sort((a, b) => (trayEndWeight(a.item) - trayEndWeight(b.item)) || (a.index - b.index))
++            .map(entry => entry.item);
++    }
+ 
+     readonly property real nonAnimHeight: {
+         if (!Config.bar.tray.compact)
+@@ -71,7 +88,7 @@ StyledRect {
+             id: items
+ 
+             model: ScriptModel {
+-                values: SystemTray.items.values.filter(i => i.status !== Status.Passive && !GlobalConfig.bar.tray.hiddenIcons.includes(i.id))
++                values: root.orderedTrayItems(root.visibleTrayItems)
+             }
+ 
+             TrayItem {}
+diff --git a/modules/bar/popouts/Content.qml b/modules/bar/popouts/Content.qml
+index 567b6cc..e975fb0 100644
+--- a/modules/bar/popouts/Content.qml
++++ b/modules/bar/popouts/Content.qml
+@@ -14,8 +14,25 @@ Item {
+     required property PopoutState popouts
+     readonly property Popout currentPopout: content.children.find(c => c.shouldBeActive) ?? null
+     readonly property Item current: currentPopout?.item ?? null
++    readonly property list<var> visibleTrayItems: SystemTray.items.values.filter(i => i.status !== Status.Passive && !GlobalConfig.bar.tray.hiddenIcons.includes(i.id))
++
++    function trayEndWeight(item) {
++        const id = String(item?.id ?? "").toLowerCase();
++        if (id.includes("pin"))
++            return 2;
++        if (id.includes("protonmail"))
++            return 1;
++        return 0;
++    }
++
++    function orderedTrayItems(items) {
++        return items
++            .map((item, index) => ({ item, index }))
++            .sort((a, b) => (trayEndWeight(a.item) - trayEndWeight(b.item)) || (a.index - b.index))
++            .map(entry => entry.item);
++    }
+ 
+-    readonly property var trayItemsToIndices: SystemTray.items.values.filter(i => i.status !== Status.Passive && !GlobalConfig.bar.tray.hiddenIcons.includes(i.id)).reduce((acc, item, i) => {
++    readonly property var trayItemsToIndices: orderedTrayItems(visibleTrayItems).reduce((acc, item, i) => {
+         acc[item.id] = i;
+         return acc;
+     }, {})
+@@ -126,7 +143,7 @@ Item {
+ 
+         Repeater {
+             model: ScriptModel {
+-                values: SystemTray.items.values.filter(i => i.hasMenu && i.status !== Status.Passive && !GlobalConfig.bar.tray.hiddenIcons.includes(i.id))
++                values: root.orderedTrayItems(root.visibleTrayItems).filter(i => i.hasMenu)
+             }
+ 
+             Popout {
+diff --git a/modules/dashboard/Wrapper.qml b/modules/dashboard/Wrapper.qml
+index ecb2d24..b853f9f 100644
+--- a/modules/dashboard/Wrapper.qml
++++ b/modules/dashboard/Wrapper.qml
+@@ -30,6 +30,16 @@ Item {
+     readonly property real nonAnimHeight: (content.item as Content)?.nonAnimHeight ?? 0
+     readonly property bool shouldBeActive: screenState.dashboard && Config.dashboard.enabled
+     property real offsetScale: shouldBeActive ? 0 : 1
++    property bool retainContent
++
++    onShouldBeActiveChanged: {
++        if (shouldBeActive) {
++            unloadTimer.stop();
++            retainContent = true;
++        } else if (retainContent) {
++            unloadTimer.restart();
++        }
++    }
+ 
+     visible: offsetScale < 1
+     anchors.topMargin: (-implicitHeight - 5) * offsetScale
+@@ -41,13 +51,20 @@ Item {
+         Anim {}
+     }
+ 
++    Timer {
++        id: unloadTimer
++
++        interval: 15000
++        onTriggered: root.retainContent = false
++    }
++
+     Loader {
+         id: content
+ 
+         anchors.horizontalCenter: parent.horizontalCenter
+         anchors.bottom: parent.bottom
+ 
+-        active: root.shouldBeActive || root.visible
++        active: root.shouldBeActive || root.visible || root.retainContent
+ 
+         sourceComponent: Content {
+             screenState: root.screenState
+diff --git a/modules/drawers/ContentWindow.qml b/modules/drawers/ContentWindow.qml
+index 73bc2b1..2c76c6d 100644
+--- a/modules/drawers/ContentWindow.qml
++++ b/modules/drawers/ContentWindow.qml
+@@ -23,15 +23,15 @@ StyledWindow {
+     readonly property ScreenState screenState: ShellState.forScreen(screen)
+ 
+     readonly property HyprlandMonitor monitor: Hypr.monitorFor(screen)
+-    readonly property bool hasSpecialWorkspace: (monitor?.lastIpcObject.specialWorkspace?.name.length ?? 0) > 0
+-    readonly property bool hasFullscreenOnNormalWs: monitor?.activeWorkspace?.toplevels.values.some(t => t.lastIpcObject.fullscreen > 1) ?? false
++    readonly property bool hasSpecialWorkspace: (monitor?.lastIpcObject?.specialWorkspace?.name.length ?? 0) > 0
++    readonly property bool hasFullscreenOnNormalWs: monitor?.activeWorkspace?.toplevels.values.some(t => (t.lastIpcObject?.fullscreen ?? 0) > 1) ?? false
+     readonly property bool hasFullscreen: {
+         if (hasSpecialWorkspace) {
+-            const specialName = monitor?.lastIpcObject.specialWorkspace?.name;
++            const specialName = monitor?.lastIpcObject?.specialWorkspace?.name;
+             if (!specialName)
+                 return false;
+             const specialWs = Hypr.workspaces.values.find(ws => ws.name === specialName);
+-            return specialWs?.toplevels.values.some(t => t.lastIpcObject.fullscreen > 1) ?? false;
++            return specialWs?.toplevels.values.some(t => (t.lastIpcObject?.fullscreen ?? 0) > 1) ?? false;
+         }
+         return hasFullscreenOnNormalWs;
+     }
+@@ -49,7 +49,7 @@ StyledWindow {
+         if (focusGrab.active || panels.popouts.isDetached)
+             return 0;
+ 
+-        if (monitor?.lastIpcObject.specialWorkspace?.name || monitor?.activeWorkspace?.toplevels.values.length > 0)
++        if (monitor?.lastIpcObject?.specialWorkspace?.name || monitor?.activeWorkspace?.toplevels.values.length > 0)
+             return 0;
+ 
+         const thresholds = [];
+diff --git a/modules/launcher/Content.qml b/modules/launcher/Content.qml
+index f5058f0..f6e3346 100644
+--- a/modules/launcher/Content.qml
++++ b/modules/launcher/Content.qml
+@@ -59,17 +59,26 @@ Item {
+         topPadding: Math.round((Tokens.padding.medium + Tokens.padding.large) / 2)
+         bottomPadding: Math.round((Tokens.padding.medium + Tokens.padding.large) / 2)
+ 
+-        placeholderText: Tr.tr("Type \"%1\" for commands").arg(GlobalConfig.launcher.actionPrefix)
++        placeholderText: {
++            if (list.showWallpapers)
++                return "Rechercher un fond d'écran…";
++            if (list.showClipboard)
++                return "Rechercher dans le presse-papiers…";
++            return Tr.tr("Type \"%1\" for commands").arg(GlobalConfig.launcher.actionPrefix);
++        }
++
++        Binding {
++            target: search.searchIcon
++            property: "text"
++            value: list.showWallpapers ? "wallpaper" : list.showClipboard ? "content_paste" : "search"
++        }
+ 
+         onAccepted: {
++            if (list.modeView)
++                return; // Entrée gérée par la vue (studio, presse-papiers)
+             const currentItem = list.currentList?.currentItem;
+             if (currentItem) {
+-                if (list.showWallpapers) {
+-                    if (Colours.scheme === "dynamic" && currentItem.modelData.path !== Wallpapers.actualCurrent)
+-                        Wallpapers.previewColourLock = true;
+-                    Wallpapers.setWallpaper(currentItem.modelData.path);
+-                    root.screenState.launcher = false;
+-                } else if (text.startsWith(GlobalConfig.launcher.actionPrefix)) {
++                if (text.startsWith(GlobalConfig.launcher.actionPrefix)) {
+                     if (text.startsWith(`${GlobalConfig.launcher.actionPrefix}calc `))
+                         currentItem.onClicked();
+                     else
+@@ -81,12 +90,28 @@ Item {
+             }
+         }
+ 
+-        Keys.onUpPressed: list.currentList?.decrementCurrentIndex()
+-        Keys.onDownPressed: list.currentList?.incrementCurrentIndex()
++        // Les vues du studio et du presse-papiers gèrent elles-mêmes ↑/↓/Échap (Qt traite ces
++        // touches avant Keys.onPressed).
++        Keys.onUpPressed: event => {
++            if (!list.modeView?.handleKey(event))
++                list.currentList?.decrementCurrentIndex();
++        }
++        Keys.onDownPressed: event => {
++            if (!list.modeView?.handleKey(event))
++                list.currentList?.incrementCurrentIndex();
++        }
+ 
+-        Keys.onEscapePressed: root.screenState.launcher = false
++        Keys.onEscapePressed: event => {
++            if (!list.modeView?.handleKey(event))
++                root.screenState.launcher = false;
++        }
+ 
+         Keys.onPressed: event => {
++            if (list.modeView?.handleKey(event)) {
++                event.accepted = true;
++                return;
++            }
++
+             if (!GlobalConfig.launcher.vimKeybinds)
+                 return;
+ 
+@@ -111,8 +136,12 @@ Item {
+ 
+         Connections {
+             function onLauncherChanged(): void {
+-                if (!root.screenState.launcher)
++                if (!root.screenState.launcher) {
+                     search.text = "";
++                    LauncherState.clear();
++                } else {
++                    search.forceActiveFocus();
++                }
+             }
+ 
+             function onSessionChanged(): void {
+@@ -122,5 +151,15 @@ Item {
+ 
+             target: root.screenState
+         }
++
++        // Ouverture dans un mode par raccourci : on repart d'une recherche vide.
++        Connections {
++            function onRequestSerialChanged(): void {
++                search.text = "";
++                search.forceActiveFocus();
++            }
++
++            target: LauncherState
++        }
+     }
+ }
+diff --git a/modules/launcher/ContentList.qml b/modules/launcher/ContentList.qml
+index a2e2590..4d33eb3 100644
+--- a/modules/launcher/ContentList.qml
++++ b/modules/launcher/ContentList.qml
+@@ -7,6 +7,8 @@ import qs.components
+ import qs.components.controls
+ import qs.services
+ import qs.utils
++import "studio"
++import "clipboard"
+ 
+ Item {
+     id: root
+@@ -19,9 +21,23 @@ Item {
+     required property int padding
+     required property int rounding
+ 
+-    readonly property bool showWallpapers: search.text.startsWith(`${GlobalConfig.launcher.actionPrefix}wallpaper `)
+-    readonly property var currentList: showWallpapers ? wallpaperList.item : appList.item // Can be either ListView or PathView, so can't type properly
+-    property string animState: showWallpapers ? "wallpapers" : "apps"
++    // Mode : demandé par raccourci (LauncherState) ou tapé (">wallpaper ", ">clipboard ", ">clip ").
++    readonly property string prefixMode: {
++        const p = GlobalConfig.launcher.actionPrefix;
++        const t = search.text;
++        if (t.startsWith(`${p}wallpaper `))
++            return "wallpapers";
++        if (t.startsWith(`${p}clipboard `) || t.startsWith(`${p}clip `))
++            return "clipboard";
++        return "";
++    }
++    readonly property string mode: LauncherState.mode || prefixMode
++    readonly property string query: prefixMode ? search.text.slice(search.text.indexOf(" ") + 1) : (mode ? search.text : "")
++    readonly property bool showWallpapers: mode === "wallpapers"
++    readonly property bool showClipboard: mode === "clipboard"
++    readonly property var modeView: showWallpapers ? wallpaperList.item : showClipboard ? clipboardList.item : null
++    readonly property var currentList: modeView ? null : appList.item
++    property string animState: mode || "apps"
+ 
+     anchors.horizontalCenter: parent.horizontalCenter
+     anchors.bottom: parent.bottom
+@@ -48,10 +64,19 @@ Item {
+             name: "wallpapers"
+ 
+             PropertyChanges {
+-                root.implicitWidth: Math.max(root.Tokens.sizes.launcher.itemWidth * 1.2, wallpaperList.implicitWidth)
+-                root.implicitHeight: root.Tokens.sizes.launcher.wallpaperHeight
++                root.implicitWidth: Math.max(root.Tokens.sizes.launcher.itemWidth * 1.2, wallpaperList.item?.implicitWidth ?? 0)
++                root.implicitHeight: Math.min(root.maxHeight, wallpaperList.item?.implicitHeight ?? root.Tokens.sizes.launcher.wallpaperHeight)
+                 wallpaperList.active: true
+             }
++        },
++        State {
++            name: "clipboard"
++
++            PropertyChanges {
++                root.implicitWidth: Math.max(root.Tokens.sizes.launcher.itemWidth, clipboardList.item?.implicitWidth ?? 0)
++                root.implicitHeight: clipboardList.item?.implicitHeight ?? 400
++                clipboardList.active: true
++            }
+         }
+     ]
+ 
+@@ -96,25 +121,40 @@ Item {
+         asynchronous: true
+         active: false
+ 
+-        anchors.top: parent.top
+-        anchors.bottom: parent.bottom
+-        anchors.horizontalCenter: parent.horizontalCenter
++        anchors.fill: parent
+ 
+-        sourceComponent: WallpaperList {
+-            objectName: "launcherWallpaperList"
++        sourceComponent: WallpaperStudio {
++            objectName: "launcherWallpaperStudio"
++
++            screenState: root.screenState
++            panels: root.panels
++            query: root.query
++        }
++    }
++
++    Loader {
++        id: clipboardList
++
++        asynchronous: true
++        active: false
++
++        anchors.fill: parent
++
++        sourceComponent: ClipboardView {
++            objectName: "launcherClipboard"
+ 
+-            search: root.search
+             screenState: root.screenState
+             panels: root.panels
+-            content: root.content
++            query: root.query
++            maxHeight: root.maxHeight
+         }
+     }
+ 
+     Row {
+         id: empty
+ 
+-        opacity: root.currentList?.count === 0 ? 1 : 0
+-        scale: root.currentList?.count === 0 ? 1 : 0.5
++        opacity: !root.modeView && root.currentList?.count === 0 ? 1 : 0
++        scale: !root.modeView && root.currentList?.count === 0 ? 1 : 0.5
+ 
+         spacing: Tokens.spacing.medium
+         padding: Tokens.padding.large
+diff --git a/modules/launcher/Wrapper.qml b/modules/launcher/Wrapper.qml
+index 8956b80..4eca00a 100644
+--- a/modules/launcher/Wrapper.qml
++++ b/modules/launcher/Wrapper.qml
+@@ -23,12 +23,18 @@ Item {
+     }
+ 
+     property real offsetScale: shouldBeActive ? 0 : 1
++    property bool retainContent
+ 
+     onShouldBeActiveChanged: {
+-        if (shouldBeActive)
++        if (shouldBeActive) {
++            unloadTimer.stop();
++            retainContent = true;
+             implicitHeight = Qt.binding(() => content.implicitHeight);
+-        else
++        } else {
++            if (retainContent)
++                unloadTimer.restart();
+             implicitHeight = implicitHeight; // Break binding during close anim
++        }
+     }
+ 
+     visible: offsetScale < 1
+@@ -43,13 +49,20 @@ Item {
+         Anim {}
+     }
+ 
++    Timer {
++        id: unloadTimer
++
++        interval: 5000
++        onTriggered: root.retainContent = false
++    }
++
+     Loader {
+         id: content
+ 
+         anchors.top: parent.top
+         anchors.horizontalCenter: parent.horizontalCenter
+ 
+-        active: root.shouldBeActive || root.visible
++        active: root.shouldBeActive || root.visible || root.retainContent
+ 
+         sourceComponent: Content {
+             screenState: root.screenState
+diff --git a/modules/lock/LockSurface.qml b/modules/lock/LockSurface.qml
+index 782cb71..7c1a6ce 100644
+--- a/modules/lock/LockSurface.qml
++++ b/modules/lock/LockSurface.qml
+@@ -189,7 +189,7 @@ WlSessionLockSurface {
+         id: wallpaperBackground
+ 
+         Visual {
+-            source: Wallpapers.current
++            source: WallStudio.playableFor(Wallpapers.current)
+             playing: PersistentState.wallpaperPlaying
+         }
+     }
+diff --git a/services/Colours.qml b/services/Colours.qml
+index 0b64400..85f52d4 100644
+--- a/services/Colours.qml
++++ b/services/Colours.qml
+@@ -61,7 +61,14 @@ Singleton {
+ 
+     function load(data: string, isPreview: bool): void {
+         const colours = isPreview ? preview : current;
+-        const scheme = JSON.parse(data);
++        let scheme;
++        try {
++            scheme = JSON.parse(data);
++        } catch (e) {
++            return; // Fichier en cours d'écriture ou sortie invalide : le prochain chargement suffira.
++        }
++        if (!scheme?.colours)
++            return;
+ 
+         if (!isPreview) {
+             root.scheme = scheme.name;
+@@ -123,7 +130,7 @@ Singleton {
+     ImageAnalyser {
+         id: analyser
+ 
+-        source: Wallpapers.current
++        source: Wallpapers.stillFor(Wallpapers.current)
+     }
+ 
+     Timer {
+diff --git a/services/Wallpapers.qml b/services/Wallpapers.qml
+index 9a8bdac..919157f 100644
+--- a/services/Wallpapers.qml
++++ b/services/Wallpapers.qml
+@@ -21,6 +21,18 @@ Searcher {
+     property string actualCurrent
+     property bool previewColourLock
+     property bool pendingPreviewClear
++    property int previewRequestId
++
++    function isVideo(path: string): bool {
++        return WallStudio.isVideo(path);
++    }
++
++    // Image fixe représentant un fond (1re image pour les vidéos) : analyse de luminance, etc.
++    function stillFor(path: string): string {
++        if (!isVideo(path))
++            return path;
++        return WallStudio.posterFor(path) || (path === actualCurrent ? `${Paths.state}/wallpaper/thumbnail.jpg` : "");
++    }
+ 
+     function getCategoryFor(w: FileSystemEntry): string {
+         let category = w.parentDir.slice(Paths.wallsdir.length + 1);
+@@ -30,24 +42,33 @@ Searcher {
+     }
+ 
+     function setRandom(): void {
+-        Quickshell.execDetached(["caelestia", "wallpaper", "-r", ...smartArg]);
++        WallStudio.shuffle("all");
+     }
+ 
++    // Passe par le studio : thème mémorisé pour ce fond + transition choisie.
+     function setWallpaper(path: string): void {
+-        actualCurrent = path;
+-        Quickshell.execDetached(["caelestia", "wallpaper", "-f", path, ...smartArg]);
++        WallStudio.apply(path, false);
+     }
+ 
+     function preview(path: string): void {
++        if (path !== current)
++            WallStudio.nextTransition();
+         previewPath = path;
+         showPreview = true;
+ 
+-        if (Colours.scheme === "dynamic")
+-            getPreviewColoursProc.running = true;
++        if (Colours.scheme === "dynamic" && path) {
++            // Relance pour le nouveau fond ; un résultat arrivé trop tard est ignoré.
++            getPreviewColoursProc.requestId = ++previewRequestId;
++            getPreviewColoursProc.requestPath = path;
++            getPreviewColoursProc.exec(WallStudio.previewCommand(path));
++        }
+     }
+ 
+     function stopPreview(): void {
++        if (showPreview && previewPath !== actualCurrent)
++            WallStudio.nextTransition();
+         showPreview = false;
++        ++previewRequestId;
+         if (previewColourLock)
+             pendingPreviewClear = true;
+         else
+@@ -55,8 +76,10 @@ Searcher {
+     }
+ 
+     onPreviewColourLockChanged: {
+-        if (!previewColourLock && pendingPreviewClear)
++        if (!previewColourLock && pendingPreviewClear) {
++            pendingPreviewClear = false;
+             Colours.showPreview = false;
++        }
+     }
+ 
+     list: wallpapers.entries
+@@ -114,9 +137,13 @@ Searcher {
+     Process {
+         id: getPreviewColoursProc
+ 
+-        command: ["caelestia", "wallpaper", "-p", root.previewPath, ...root.smartArg]
++        property int requestId
++        property string requestPath
++
+         stdout: StdioCollector {
+             onStreamFinished: {
++                if (getPreviewColoursProc.requestId !== root.previewRequestId || getPreviewColoursProc.requestPath !== root.previewPath || !root.showPreview || !text.trim())
++                    return;
+                 Colours.load(text, true);
+                 Colours.showPreview = true;
+             }

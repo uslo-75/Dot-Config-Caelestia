@@ -2,18 +2,19 @@ pragma Singleton
 
 import Quickshell
 
+// Mode demandé à l'ouverture du launcher ("" = applications, "wallpapers", "clipboard").
 Singleton {
     id: root
 
-    property string searchText: ""
+    property string mode: ""
     property int requestSerial: 0
 
-    function openSearch(text: string): void {
-        searchText = text;
+    function open(mode: string): void {
+        root.mode = mode;
         requestSerial++;
     }
 
     function clear(): void {
-        searchText = "";
+        mode = "";
     }
 }

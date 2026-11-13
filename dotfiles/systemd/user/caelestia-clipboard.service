@@ -1,10 +1,10 @@
 [Unit]
-Description=Serialized Clipse clipboard listeners with history recovery
+Description=Historique du presse-papiers Caelestia (cliphist)
 After=graphical-session.target
 PartOf=graphical-session.target
 
 [Service]
-ExecStart=%h/.local/bin/clipse-listen-safe
+ExecStart=%h/.local/bin/caelestia-clipboard-listen
 Restart=on-failure
 RestartSec=1
 TimeoutStopSec=5

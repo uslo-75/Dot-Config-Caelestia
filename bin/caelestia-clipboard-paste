@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Remet un élément dans le presse-papiers puis, sauf --copy, le colle dans la fenêtre active.
+#   caelestia-clipboard-paste [--copy] [--terminal] --id ID                        (historique)
+#   caelestia-clipboard-paste [--copy] [--terminal] --file FICHIER [--type MIME]   (épingle image)
+#   caelestia-clipboard-paste [--copy] [--terminal] --text TEXTE                   (épingle texte)
+set -u
+
+copy_only=0 terminal=0 has_text=0
+id="" file="" type="" text=""
+
+while (($#)); do
+    case "$1" in
+        --copy) copy_only=1 ;;
+        --terminal) terminal=1 ;;
+        --id) id="${2:-}"; shift ;;
+        --file) file="${2:-}"; shift ;;
+        --type) type="${2:-}"; shift ;;
+        --text) text="${2-}"; has_text=1; shift ;;
+        *) echo "argument inconnu : $1" >&2; exit 2 ;;
+    esac
+    shift
+done
+
+type_args=()
+[[ -n "$type" ]] && type_args=(--type "$type")
+
+if [[ -n "$id" ]]; then
+    cliphist decode "$id" | wl-copy "${type_args[@]}" || exit 1
+elif [[ -n "$file" ]]; then
+    [[ -f "$file" ]] || exit 1
+    wl-copy "${type_args[@]}" <"$file" || exit 1
+elif ((has_text)); then
+    printf '%s' "$text" | wl-copy || exit 1
+else
+    exit 2
+fi
+
+((copy_only)) && exit 0
+
+# Le launcher se ferme : on laisse la fenêtre d'origine reprendre le focus clavier.
+sleep 0.22
+if ((terminal)); then
+    wtype -M ctrl -M shift v -m shift -m ctrl
+else
+    wtype -M ctrl v -m ctrl
+fi

@@ -72,9 +72,15 @@ run() {
 
 require_caelestia() {
     local missing=() package
-    for package in caelestia-shell caelestia-cli hyprland; do
-        pacman -Q "$package" >/dev/null 2>&1 || missing+=("$package")
+    pacman -Q hyprland >/dev/null 2>&1 || missing+=(hyprland)
+    for package in caelestia-shell caelestia-cli; do
+        pacman -Q "$package" >/dev/null 2>&1 || pacman -Q "$package-git" >/dev/null 2>&1 || missing+=("$package-git")
     done
+    # Le studio s'appuie sur la lecture vidéo native de Caelestia (module Caelestia.Multimedia,
+    # branche main après la 2.5.0) : caelestia-shell-git tant qu'aucune version stable ne l'inclut.
+    if [[ ! -d /usr/lib/qt6/qml/Caelestia/Multimedia ]]; then
+        missing+=("caelestia-shell-git (vidéos natives)")
+    fi
     if ! pacman -Q quickshell >/dev/null 2>&1 && ! pacman -Q quickshell-git >/dev/null 2>&1; then
         missing+=("quickshell ou quickshell-git")
     fi
@@ -249,7 +255,7 @@ install_dotfiles() {
     for source in "$REPO_ROOT"/dotfiles/caelestia/*; do
         name="$(basename -- "$source")"
         case "$name" in
-            cli.json|shell.json|theme-mode|theme-variant)
+            cli.json|shell.json)
                 deploy_if_missing "$source" "$HOME/.config/caelestia/$name"
                 ;;
             *)
@@ -257,13 +263,6 @@ install_dotfiles() {
                 ;;
         esac
     done
-    for source in "$REPO_ROOT"/dotfiles/waypaper/*; do
-        name="$(basename -- "$source")"
-        deploy_if_missing "$source" "$HOME/.config/waypaper/$name"
-    done
-    deploy_if_missing "$REPO_ROOT/dotfiles/clipse/config.json" "$HOME/.config/clipse/config.json"
-    deploy_if_missing "$REPO_ROOT/dotfiles/clipse-gui/settings.ini" "$HOME/.config/clipse-gui/settings.ini"
-
     for source in "$REPO_ROOT"/bin/*; do
         [[ -f "$source" ]] || continue
         name="$(basename -- "$source")"
@@ -288,19 +287,18 @@ install_dotfiles() {
 install_qml_overlay() {
     local qml_dir="$HOME/.config/quickshell/caelestia"
     local baseline=/etc/xdg/quickshell/caelestia
-    local patch_file="$REPO_ROOT/patches/caelestia-shell-2.5.0.patch"
-    local overlay_file="$REPO_ROOT/overlay/quickshell/caelestia/services/LauncherState.qml"
+    local patch_file="$REPO_ROOT/patches/caelestia-shell-main.patch"
+    local overlay_dir="$REPO_ROOT/overlay/quickshell/caelestia"
     local marker="$STATE_ROOT/qml-patch.sha256"
     local shell_version patch_hash
     [[ -d "$baseline" ]] || { printf 'Base QML Caelestia introuvable: %s\n' "$baseline" >&2; exit 1; }
     # La version du paquet fait partie de l'empreinte : après une mise à jour de
     # caelestia-shell, la copie locale est reconstruite au lieu de masquer la nouvelle version.
-    shell_version="$(pacman -Q caelestia-shell 2>/dev/null || pacman -Q caelestia-shell-git 2>/dev/null || true)"
-    patch_hash="$({ sha256sum "$patch_file" "$overlay_file"; printf '%s\n' "$shell_version"; } | sha256sum | awk '{print $1}')"
+    shell_version="$(pacman -Q caelestia-shell-git 2>/dev/null || pacman -Q caelestia-shell 2>/dev/null || true)"
+    patch_hash="$({ sha256sum "$patch_file"; find "$overlay_dir" -type f -print0 | sort -z | xargs -0 sha256sum; printf '%s\n' "$shell_version"; } | sha256sum | awk '{print $1}')"
 
-    if [[ -f "$marker" && "$(cat "$marker" 2>/dev/null)" == "$patch_hash" ]] && rg -q 'waypaperCurrentNamePath' "$qml_dir/services/Wallpapers.qml" 2>/dev/null; then
+    if [[ -f "$marker" && "$(cat "$marker" 2>/dev/null)" == "$patch_hash" && -f "$qml_dir/services/WallStudio.qml" ]]; then
         log "overlay QML déjà appliqué"
-        deploy "$overlay_file" "$qml_dir/services/LauncherState.qml"
         return 0
     fi
 
@@ -313,11 +311,11 @@ install_qml_overlay() {
         printf 'Patch QML incompatible avec %s ; aucun fichier QML n’a été modifié. Détails: /tmp/caelestia-qml-patch.log\n' "${shell_version:-caelestia-shell}" >&2
         exit 1
     fi
-    install -m 0644 "$overlay_file" "$tmp_qml/services/LauncherState.qml"
+    rsync -rlt "$overlay_dir/" "$tmp_qml/"
 
     backup_path "$qml_dir"
     if (( DRY_RUN )); then
-        log "reconstruirait $qml_dir depuis $baseline (${shell_version:-version inconnue}) + patch"
+        log "reconstruirait $qml_dir depuis $baseline (${shell_version:-version inconnue}) + patch + overlay"
     else
         install -d -m 0755 "$qml_dir"
         rsync -rlt --delete "$tmp_qml/" "$qml_dir/"
@@ -327,15 +325,85 @@ install_qml_overlay() {
     rm -rf -- "$tmp_qml"
 }
 
+# Ancienne installation (Waypaper + mpvpaper + Clipse) : services arrêtés, scripts retirés
+# (sauvegardés), réglages migrés vers le studio et le presse-papiers intégrés au shell.
+migrate_legacy() {
+    local legacy_units=(
+        caelestia-wallpaper-thumbs-watch.service mpvpaper-guard.service
+        clipse-listen-safe.service clipse-maintain.timer clipse-maintain.service
+        clipse-history-snapshot.timer clipse-history-snapshot.service clipse-theme-watch.service
+    )
+    local legacy_bins=(
+        mpvpaper-guard caelestia-wallpaper-set waypaper-open caelestia-wallpaper-video caelestia-theme-menu
+        caelestia-wallpaper-thumbs-watch caelestia-wallpaper-menu caelestia-wallpaper-thumbs waypaper-restore-safe
+        caelestia-waypaper-apply waypaper-style-polish cg-open clipse-gui-fixed clipse-history-snapshot
+        clipse-listen-safe clipse-maintain clipse-privacy-audit clipse-store-safe clipse-theme-sync clipse-theme-watch
+    )
+    local unit name path
+    for unit in "${legacy_units[@]}"; do
+        path="$HOME/.config/systemd/user/$unit"
+        [[ -e "$path" ]] || continue
+        log "retrait de l'ancien service $unit"
+        run systemctl --user disable --now "$unit" >/dev/null 2>&1 || true
+        backup_path "$path"
+        run rm -f -- "$path"
+    done
+    for name in "${legacy_bins[@]}"; do
+        path="$HOME/.local/bin/$name"
+        [[ -e "$path" ]] || continue
+        backup_path "$path"
+        run rm -f -- "$path"
+    done
+    run pkill -x mpvpaper >/dev/null 2>&1 || true
+    run pkill -f 'clipse-gui' >/dev/null 2>&1 || true
+
+    (( DRY_RUN )) && { log "migrerait les réglages de thème et de fond"; return 0; }
+
+    local cfg="$HOME/.config/caelestia"
+    local state="${XDG_STATE_HOME:-$HOME/.local/state}/caelestia"
+    # Réglage forcé par Super+Alt+C (ancien menu) -> thème mémorisé pour ce fond dans le studio.
+    if [[ -s "$cfg/theme-override-wallpaper" && ! -e "$state/wallstudio.json" ]]; then
+        backup_path "$state/wallstudio.json"
+        python3 - "$cfg" "$state/wallstudio.json" <<'PY'
+import json, sys
+from pathlib import Path
+cfg, out = Path(sys.argv[1]), Path(sys.argv[2])
+read = lambda n, d: (cfg / n).read_text().strip() if (cfg / n).exists() else d
+wall = read("theme-override-wallpaper", "")
+mode, variant = read("theme-mode", "auto"), read("theme-variant", "auto")
+themes = {wall: {"mode": mode, "variant": variant}} if wall and (mode != "auto" or variant != "auto") else {}
+out.parent.mkdir(parents=True, exist_ok=True)
+out.write_text(json.dumps({"favourites": [], "themes": themes, "transition": "random"}, indent=2))
+PY
+    fi
+    # Le fond actif de Waypaper devient celui de Caelestia (les vidéos sont maintenant acceptées).
+    if [[ -s "$cfg/waypaper-current" ]]; then
+        local current
+        current="$(head -n1 "$cfg/waypaper-current")"
+        if [[ -f "$current" && "$(cat "$state/wallpaper/path.txt" 2>/dev/null)" != "$current" ]]; then
+            "$HOME/.local/bin/caelestia-wallpaper-apply" "$current" >/dev/null 2>&1 || true
+        fi
+    fi
+    for name in waypaper-current theme-override-wallpaper theme-mode theme-variant; do
+        [[ -e "$cfg/$name" ]] || continue
+        backup_path "$cfg/$name"
+        rm -f -- "$cfg/$name"
+    done
+    # « Auto » = mode et variante choisis d'après le fond (comme l'ancien script).
+    if [[ -f "$cfg/shell.json" ]] && ! jq -e '.services.smartScheme == true' "$cfg/shell.json" >/dev/null 2>&1; then
+        backup_path "$cfg/shell.json"
+        local tmp
+        tmp="$(mktemp)"
+        jq '.services.smartScheme = true' "$cfg/shell.json" > "$tmp" && install -m 0600 "$tmp" "$cfg/shell.json"
+        rm -f -- "$tmp"
+    fi
+    rm -rf -- "$HOME/.cache/caelestia/wallpaper-thumbs" "$HOME/.cache/caelestia/wallpaper-transition-frames"
+}
+
 enable_services() {
     local units=(
         caelestia-cache-maintain.timer
-        caelestia-wallpaper-thumbs-watch.service
-        mpvpaper-guard.service
-        clipse-listen-safe.service
-        clipse-maintain.timer
-        clipse-history-snapshot.timer
-        clipse-theme-watch.service
+        caelestia-clipboard.service
         protonmail-tray.service
     ) unit
     (( INSTALL_SERVICES )) || { log "activation systemd utilisateur ignorée"; return 0; }
@@ -406,6 +474,7 @@ require_caelestia
 install_dependencies
 init_backup
 install_dotfiles
+migrate_legacy
 install_qml_overlay
 enable_services
 download_wallpapers
@@ -415,7 +484,7 @@ if (( INSTALL_SYSTEM )); then
 fi
 
 if (( ! DRY_RUN )); then
-    "$HOME/.local/bin/waypaper-style-polish" || true
+    "$HOME/.local/bin/caelestia-wallpaper-cache" build --async || true
 fi
 reload_session
 
