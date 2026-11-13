@@ -1,0 +1,4 @@
+# Un patch contient par nature des lignes de contexte « vides » (un seul espace) :
+# pas de contrôle des espaces en fin de ligne sur ces fichiers (git diff --check).
+patches/*.patch -whitespace
+*.qsb binary

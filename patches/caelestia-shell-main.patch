@@ -14,15 +14,16 @@ index 1c7fbdb..b1f14ba 100644
                  to: 0
                  duration: 23500
 diff --git a/components/widgets/WallpaperImpl.qml b/components/widgets/WallpaperImpl.qml
-index 6229874..3848133 100644
+index 6229874..821cd0b 100644
 --- a/components/widgets/WallpaperImpl.qml
 +++ b/components/widgets/WallpaperImpl.qml
-@@ -6,10 +6,21 @@ import Caelestia.Shaders
+@@ -6,10 +6,22 @@ import Caelestia.Shaders
  import Caelestia.State
  import qs.services
  
-+// Fond d'écran d'un écran : `live` lit le fond appliqué, `still` affiche une image fixe par-dessus
-+// (aperçu du studio, ou affiche du fond qu'on vient d'appliquer en attendant son lecteur).
++// Fond d'écran d'un écran : `live` lit le fond appliqué (celui de l'écran `screenName`, sinon le
++// fond commun), `still` affiche une image fixe par-dessus (aperçu du studio, ou affiche du fond
++// qu'on vient d'appliquer en attendant son lecteur).
 +//
 +// Créer ou détruire un lecteur vidéo bloque l'interface ~80 ms à chaque fois (décodeur NVIDIA) :
 +// `live` ne suit donc jamais les aperçus, et son fichier ne change que caché derrière `still`,
@@ -39,7 +40,7 @@ index 6229874..3848133 100644
          CUtils.dependency(Config.background.wallpaperTransition);
          let transition = CUtils.enumToString(Config.background, "wallpaperTransition");
          if (!transition)
-@@ -18,34 +29,160 @@ Item {
+@@ -18,34 +30,168 @@ Item {
          transition = transition[0].toLowerCase() + transition.slice(1);
          return Shaders[transition] ?? Shaders.crossfade;
      }
@@ -48,12 +49,19 @@ index 6229874..3848133 100644
 +    // Figée au début de chaque transition : en changer pendant qu'elle joue ne fait pas de saut.
 +    property transitionShader runningShader: Shaders.crossfade
 +
++    // Écran dont on affiche le fond ("" : le fond commun).
++    property string screenName
++    // Fond appliqué à cet écran.
++    readonly property string source: WallStudio.wallFor(screenName)
++    // L'aperçu du studio concerne cet écran (il vise tous les écrans, ou celui-ci).
++    readonly property bool previewed: Wallpapers.showPreview && (WallStudio.target === "" || WallStudio.target === screenName)
++
 +    // Fichier lu pour le fond appliqué (copie à la taille de l'écran pour les grandes vidéos).
-+    readonly property string playable: WallStudio.playableFor(Wallpapers.actualCurrent)
++    readonly property string playable: WallStudio.playableFor(source)
 +    // Image fixe du fond appliqué (l'affiche pour une vidéo), "" si elle n'existe pas encore.
-+    readonly property string actualStill: WallStudio.posterFor(Wallpapers.actualCurrent)
++    readonly property string actualStill: WallStudio.posterFor(source)
 +    // Image fixe de l'aperçu du studio, "" hors aperçu.
-+    readonly property string previewStill: Wallpapers.showPreview && Wallpapers.previewPath !== Wallpapers.actualCurrent ? WallStudio.posterFor(Wallpapers.previewPath) : ""
++    readonly property string previewStill: previewed && Wallpapers.previewPath !== source ? WallStudio.posterFor(Wallpapers.previewPath) : ""
 +    // Image fixe à afficher ("" = afficher `live`) : l'aperçu, sinon l'affiche du fond appliqué
 +    // tant que `live` lit encore l'ancien.
 +    readonly property string stillTarget: previewStill !== "" ? previewStill : live.source === playable ? "" : actualStill
@@ -78,7 +86,8 @@ index 6229874..3848133 100644
 +        const now = Date.now();
 +        if (now - appliedAt < 700)
 +            return false;
-+        if (Colours.scheme !== "dynamic")
++        // Un fond propre à l'écran ne change pas les couleurs du thème.
++        if (Colours.scheme !== "dynamic" || WallStudio.hasOwnWall(screenName))
 +            return true;
 +        if (Colours.schemeLoadedAt >= appliedAt)
 +            return now - Colours.schemeLoadedAt >= 350;
@@ -207,7 +216,7 @@ index 6229874..3848133 100644
      }
  
      ShaderEffectSource {
-@@ -55,14 +192,7 @@ Item {
+@@ -55,14 +201,7 @@ Item {
          live: false
          visible: false
  
@@ -223,7 +232,7 @@ index 6229874..3848133 100644
      }
  
      ShaderEffectSource {
-@@ -72,28 +202,33 @@ Item {
+@@ -72,28 +211,33 @@ Item {
          live: false
          visible: false
  
@@ -270,7 +279,7 @@ index 6229874..3848133 100644
      }
  
      ShaderEffect {
-@@ -105,6 +240,6 @@ Item {
+@@ -105,6 +249,6 @@ Item {
  
          anchors.fill: parent
          visible: root.transitionProgress < 1
@@ -279,7 +288,7 @@ index 6229874..3848133 100644
      }
  }
 diff --git a/daemons/Shortcuts.qml b/daemons/Shortcuts.qml
-index adc4e4c..54e560e 100644
+index adc4e4c..9740cc4 100644
 --- a/daemons/Shortcuts.qml
 +++ b/daemons/Shortcuts.qml
 @@ -11,7 +11,28 @@ Scope {
@@ -312,7 +321,7 @@ index adc4e4c..54e560e 100644
  
      // qmllint disable unresolved-type
      CustomShortcut {
-@@ -75,6 +96,22 @@ Scope {
+@@ -75,6 +96,30 @@ Scope {
          }
      }
  
@@ -332,10 +341,18 @@ index adc4e4c..54e560e 100644
 +        onPressed: root.toggleLauncherMode("clipboard")
 +    }
 +
++    // qmllint disable unresolved-type
++    CustomShortcut {
++        // qmllint enable unresolved-type
++        name: "emoji"
++        description: "Toggle the emoji and symbol picker"
++        onPressed: root.toggleLauncherMode("emoji")
++    }
++
      // qmllint disable unresolved-type
      CustomShortcut {
          // qmllint enable unresolved-type
-@@ -144,6 +181,41 @@ Scope {
+@@ -144,6 +189,50 @@ Scope {
          target: "nexus"
      }
  
@@ -365,6 +382,15 @@ index adc4e4c..54e560e 100644
 +            root.toggleLauncherMode("clipboard");
 +        }
 +
++        // Autres modes : "emoji", "files", "web".
++        function openMode(mode: string): void {
++            root.openLauncherMode(mode);
++        }
++
++        function toggleMode(mode: string): void {
++            root.toggleLauncherMode(mode);
++        }
++
 +        function close(): void {
 +            const screenState = ShellState.forActive();
 +            if (screenState)
@@ -378,63 +404,165 @@ index adc4e4c..54e560e 100644
          function info(title: string, message: string, icon: string): void {
              Toaster.toast(title, message, icon, Toast.Info);
 diff --git a/modules/background/Background.qml b/modules/background/Background.qml
-index 9730f62..b9bd1f3 100644
+index 9730f62..055fd4f 100644
 --- a/modules/background/Background.qml
 +++ b/modules/background/Background.qml
-@@ -47,7 +47,9 @@ Variants {
+@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
+ 
+ import QtQuick
+ import Quickshell
++import Quickshell.Io
+ import Quickshell.Wayland
+ import Caelestia.Config
+ import qs.components
+@@ -16,10 +17,58 @@ Variants {
+ 
+         required property ShellScreen modelData
+ 
++        // Une fenêtre en vrai plein écran occupe cet écran (espace actif, ou espace spécial ouvert).
++        // Une fenêtre seulement agrandie (état 1) laisse voir le fond autour d'elle et par transparence.
++        readonly property bool covered: {
++            const mon = Hypr.monitorFor(modelData);
++            if (!mon)
++                return false;
++            const covers = ws => ws?.toplevels.values.some(t => (t.lastIpcObject?.fullscreen ?? 0) > 1) ?? false;
++            const special = mon.lastIpcObject?.specialWorkspace?.name;
++            if (special && covers(Hypr.workspaces.values.find(w => w.name === special)))
++                return true;
++            return covers(mon.activeWorkspace);
++        }
++
++        // Hyprland (0.57) laisse invisible une couche de fond créée, ou changée de niveau, pendant
++        // qu'une fenêtre est en plein écran sur son écran, et ne la ré-affiche pas ensuite (il ne
++        // le fait que pour le niveau « top ») : sans rien faire, le fond reste absent jusqu'au
++        // redémarrage du shell. Hyprland est donc interrogé à chaque création ou changement de
++        // niveau de la couche (l'état suivi par le shell n'est pas encore chargé à son démarrage) ;
++        // une couche née sous un plein écran (`suspect`) est re-créée dès que l'écran est dégagé.
++        // Elle ne montrait rien : on ne voit que le fond apparaître.
++        property bool suspect
++        property bool remapping
++        readonly property list<string> stateCommand: ["sh", "-c", "hyprctl -j monitors; echo @@; hyprctl -j clients"]
++
++        // 1 : un plein écran occupe cet écran d'après Hyprland, 0 : non, -1 : réponse illisible.
++        function coveredIn(text: string): int {
++            try {
++                const [monitors, clients] = text.split("@@").map(t => JSON.parse(t));
++                const mon = monitors.find(m => m.name === modelData.name);
++                if (!mon)
++                    return -1;
++                const ids = [mon.activeWorkspace?.id];
++                if (mon.specialWorkspace?.name)
++                    ids.push(mon.specialWorkspace.id);
++                return clients.some(c => ids.includes(c.workspace?.id) && c.fullscreen > 1) ? 1 : 0;
++            } catch (e) {
++                return -1;
++            }
++        }
++
++        onBackingWindowVisibleChanged: {
++            if (backingWindowVisible)
++                mapCheck.running = true;
++        }
++        Component.onCompleted: mapCheck.running = true
++
+         screen: modelData
+         name: "background"
++        visible: !remapping
+         WlrLayershell.exclusionMode: ExclusionMode.Ignore
+         WlrLayershell.layer: contentItem.Config.background.wallpaperEnabled ? WlrLayer.Background : WlrLayer.Bottom
++        WlrLayershell.onLayerChanged: mapCheck.running = true
+         color: contentItem.Config.background.wallpaperEnabled ? "black" : "transparent"
+         surfaceFormat.opaque: false
+ 
+@@ -34,6 +83,42 @@ Variants {
+             component: win
+         }
+ 
++        Process {
++            id: mapCheck
++
++            command: win.stateCommand
++            stdout: StdioCollector {
++                onStreamFinished: {
++                    if (win.coveredIn(text) === 1)
++                        win.suspect = true;
++                }
++            }
++        }
++
++        // Couche à re-créer : tant que le shell voit l'écran dégagé (ou n'en sait encore rien, à
++        // son démarrage), on demande à Hyprland, et on la re-crée dès qu'il confirme.
++        Timer {
++            running: win.suspect && !win.covered
++            interval: 250
++            repeat: true
++            onTriggered: clearCheck.running = true
++        }
++
++        Process {
++            id: clearCheck
++
++            command: win.stateCommand
++            stdout: StdioCollector {
++                onStreamFinished: {
++                    if (!win.suspect || win.coveredIn(text) !== 0)
++                        return;
++                    win.suspect = false;
++                    win.remapping = true;
++                    Qt.callLater(() => win.remapping = false);
++                }
++            }
++        }
++
+         Item {
+             id: behindClock
+ 
+@@ -47,7 +132,10 @@ Variants {
                  anchors.fill: parent
                  active: Config.background.wallpaperEnabled
  
 -                sourceComponent: Wallpaper {}
 +                sourceComponent: Wallpaper {
 +                    screen: win.modelData
++                    covered: win.covered
 +                }
              }
  
              Visualiser {
 diff --git a/modules/background/Wallpaper.qml b/modules/background/Wallpaper.qml
-index 0f6363e..7bd5f6c 100644
+index 0f6363e..eeb6378 100644
 --- a/modules/background/Wallpaper.qml
 +++ b/modules/background/Wallpaper.qml
-@@ -1,8 +1,11 @@
+@@ -1,8 +1,10 @@
  pragma ComponentBehavior: Bound
  
  import QtQuick
 +import Quickshell
-+import Quickshell.Hyprland
  import Caelestia.Config
  import Caelestia.I18n
 +import Caelestia.State
  import qs.components
  import qs.components.filedialog
  import qs.components.widgets
-@@ -12,8 +15,22 @@ import qs.utils
+@@ -12,8 +14,13 @@ import qs.utils
  Item {
      id: root
  
 +    property ShellScreen screen
      property bool completed
  
-+    // Une fenêtre plein écran (ou agrandie) couvre ce fond : inutile de décoder la vidéo.
-+    readonly property HyprlandMonitor monitor: screen ? Hypr.monitorFor(screen) : null
-+    readonly property bool covered: {
-+        const mon = monitor;
-+        if (!mon)
-+            return false;
-+        const covers = ws => ws?.toplevels.values.some(t => (t.lastIpcObject?.fullscreen ?? 0) > 0) ?? false;
-+        const special = mon.lastIpcObject?.specialWorkspace?.name;
-+        if (special && covers(Hypr.workspaces.values.find(w => w.name === special)))
-+            return true;
-+        return covers(mon.activeWorkspace);
-+    }
++    // Une fenêtre en vrai plein écran couvre ce fond (voir Background.qml) : inutile de décoder
++    // la vidéo.
++    property bool covered
 +
      Component.onCompleted: completed = true
  
      Loader {
-@@ -86,5 +103,6 @@ Item {
+@@ -86,5 +93,7 @@ Item {
          id: impl
  
          anchors.fill: parent
++        screenName: root.screen?.name ?? ""
 +        autoPaused: root.covered || RuntimeState.gameMode
      }
  }
@@ -592,7 +720,7 @@ index 73bc2b1..2c76c6d 100644
  
          const thresholds = [];
 diff --git a/modules/launcher/Content.qml b/modules/launcher/Content.qml
-index f5058f0..23c5b90 100644
+index f5058f0..979370f 100644
 --- a/modules/launcher/Content.qml
 +++ b/modules/launcher/Content.qml
 @@ -19,6 +19,26 @@ Item {
@@ -622,7 +750,7 @@ index f5058f0..23c5b90 100644
      implicitWidth: listWrapper.width + padding * 2
      implicitHeight: search.height + listWrapper.height + padding + search.anchors.bottomMargin
  
-@@ -59,17 +79,26 @@ Item {
+@@ -59,17 +79,28 @@ Item {
          topPadding: Math.round((Tokens.padding.medium + Tokens.padding.large) / 2)
          bottomPadding: Math.round((Tokens.padding.medium + Tokens.padding.large) / 2)
  
@@ -632,13 +760,15 @@ index f5058f0..23c5b90 100644
 +                return "Rechercher un fond d'écran…";
 +            if (list.showClipboard)
 +                return "Rechercher dans le presse-papiers…";
++            if (list.showExtra)
++                return list.extraModes[list.mode].placeholder;
 +            return Tr.tr("Type \"%1\" for commands").arg(GlobalConfig.launcher.actionPrefix);
 +        }
 +
 +        Binding {
 +            target: search.searchIcon
 +            property: "text"
-+            value: list.showWallpapers ? "wallpaper" : list.showClipboard ? "content_paste" : "search"
++            value: list.showWallpapers ? "wallpaper" : list.showClipboard ? "content_paste" : list.showExtra ? list.extraModes[list.mode].icon : "search"
 +        }
  
          onAccepted: {
@@ -656,7 +786,7 @@ index f5058f0..23c5b90 100644
                      if (text.startsWith(`${GlobalConfig.launcher.actionPrefix}calc `))
                          currentItem.onClicked();
                      else
-@@ -81,12 +110,28 @@ Item {
+@@ -81,12 +112,28 @@ Item {
              }
          }
  
@@ -688,7 +818,7 @@ index f5058f0..23c5b90 100644
              if (!GlobalConfig.launcher.vimKeybinds)
                  return;
  
-@@ -111,8 +156,12 @@ Item {
+@@ -111,8 +158,12 @@ Item {
  
          Connections {
              function onLauncherChanged(): void {
@@ -703,7 +833,7 @@ index f5058f0..23c5b90 100644
              }
  
              function onSessionChanged(): void {
-@@ -122,5 +171,17 @@ Item {
+@@ -122,5 +173,17 @@ Item {
  
              target: root.screenState
          }
@@ -722,46 +852,76 @@ index f5058f0..23c5b90 100644
      }
  }
 diff --git a/modules/launcher/ContentList.qml b/modules/launcher/ContentList.qml
-index a2e2590..1e3eb3b 100644
+index a2e2590..1e17602 100644
 --- a/modules/launcher/ContentList.qml
 +++ b/modules/launcher/ContentList.qml
-@@ -7,6 +7,8 @@ import qs.components
+@@ -7,6 +7,9 @@ import qs.components
  import qs.components.controls
  import qs.services
  import qs.utils
 +import "studio"
 +import "clipboard"
++import "modes"
  
  Item {
      id: root
-@@ -19,9 +21,23 @@ Item {
+@@ -19,9 +22,52 @@ Item {
      required property int padding
      required property int rounding
  
 -    readonly property bool showWallpapers: search.text.startsWith(`${GlobalConfig.launcher.actionPrefix}wallpaper `)
 -    readonly property var currentList: showWallpapers ? wallpaperList.item : appList.item // Can be either ListView or PathView, so can't type properly
 -    property string animState: showWallpapers ? "wallpapers" : "apps"
-+    // Mode : demandé par raccourci (LauncherState) ou tapé (">wallpaper ", ">clipboard ", ">clip ").
-+    readonly property string prefixMode: {
++    // Modes ajoutés (dossier modes/) : mots tapés après le préfixe d'action, texte d'aide et
++    // icône de la barre de recherche. Les moteurs web ont chacun leur mot (">yt …").
++    readonly property var extraModes: ({
++            emoji: {
++                keywords: ["emoji", "e"],
++                placeholder: "Rechercher un emoji ou un symbole…",
++                icon: "mood"
++            },
++            files: {
++                keywords: ["files", "f"],
++                placeholder: "Rechercher un fichier…",
++                icon: "folder_open"
++            },
++            web: {
++                keywords: ["web", ...Extras.web.engines.map(e => e.key)],
++                placeholder: "Rechercher sur le web…",
++                icon: "travel_explore"
++            }
++        })
++    // Mot tapé entre le préfixe d'action et la première espace (">yt chats" -> "yt").
++    readonly property string keyword: {
 +        const p = GlobalConfig.launcher.actionPrefix;
 +        const t = search.text;
-+        if (t.startsWith(`${p}wallpaper `))
++        const space = t.indexOf(" ");
++        return t.startsWith(p) && space > 0 ? t.slice(p.length, space) : "";
++    }
++    // Mode : demandé par raccourci (LauncherState) ou tapé (">wallpaper ", ">clip ", ">emoji "…).
++    readonly property string prefixMode: {
++        const k = keyword;
++        if (k === "wallpaper")
 +            return "wallpapers";
-+        if (t.startsWith(`${p}clipboard `) || t.startsWith(`${p}clip `))
++        if (k === "clipboard" || k === "clip")
 +            return "clipboard";
++        for (const [name, def] of Object.entries(extraModes))
++            if (def.keywords.includes(k))
++                return name;
 +        return "";
 +    }
 +    readonly property string mode: LauncherState.modeFor(screenState) || prefixMode
 +    readonly property string query: prefixMode ? search.text.slice(search.text.indexOf(" ") + 1) : (mode ? search.text : "")
 +    readonly property bool showWallpapers: mode === "wallpapers"
 +    readonly property bool showClipboard: mode === "clipboard"
-+    readonly property var modeView: showWallpapers ? wallpaperList.item : showClipboard ? clipboardList.item : null
++    readonly property bool showExtra: extraModes[mode] !== undefined
++    readonly property var modeView: showWallpapers ? wallpaperList.item : showClipboard ? clipboardList.item : showExtra ? extraList.item : null
 +    readonly property var currentList: modeView ? null : appList.item
-+    property string animState: mode || "apps"
++    property string animState: showExtra ? "extra" : mode || "apps"
  
      anchors.horizontalCenter: parent.horizontalCenter
      anchors.bottom: parent.bottom
-@@ -48,14 +64,27 @@ Item {
+@@ -48,14 +94,36 @@ Item {
              name: "wallpapers"
  
              PropertyChanges {
@@ -780,6 +940,15 @@ index a2e2590..1e3eb3b 100644
 +                root.implicitHeight: clipboardList.item?.implicitHeight ?? 400
 +                clipboardList.active: true
 +            }
++        },
++        State {
++            name: "extra"
++
++            PropertyChanges {
++                root.implicitWidth: Math.max(root.Tokens.sizes.launcher.itemWidth, extraList.item?.implicitWidth ?? 0)
++                root.implicitHeight: Math.min(root.maxHeight, extraList.item?.implicitHeight ?? 300)
++                extraList.active: true
++            }
          }
      ]
  
@@ -791,7 +960,7 @@ index a2e2590..1e3eb3b 100644
          SequentialAnimation {
              Anim {
                  target: root
-@@ -93,28 +122,44 @@ Item {
+@@ -93,28 +161,90 @@ Item {
      Loader {
          id: wallpaperList
  
@@ -832,6 +1001,52 @@ index a2e2590..1e3eb3b 100644
 -            content: root.content
 +            query: root.query
 +            maxHeight: root.maxHeight
++        }
++    }
++
++    Loader {
++        id: extraList
++
++        active: false
++
++        anchors.fill: parent
++
++        sourceComponent: root.mode === "emoji" ? emojiMode : root.mode === "files" ? filesMode : root.mode === "web" ? webMode : null
++    }
++
++    Component {
++        id: emojiMode
++
++        EmojiMode {
++            screenState: root.screenState
++            query: root.query
++            maxHeight: root.maxHeight
++            keyword: root.keyword
++            search: root.search
++        }
++    }
++
++    Component {
++        id: filesMode
++
++        FilesMode {
++            screenState: root.screenState
++            query: root.query
++            maxHeight: root.maxHeight
++            keyword: root.keyword
++            search: root.search
++        }
++    }
++
++    Component {
++        id: webMode
++
++        WebMode {
++            screenState: root.screenState
++            query: root.query
++            maxHeight: root.maxHeight
++            keyword: root.keyword
++            search: root.search
          }
      }
  
@@ -892,8 +1107,56 @@ index 8956b80..4eca00a 100644
  
          sourceComponent: Content {
              screenState: root.screenState
+diff --git a/modules/launcher/services/Actions.qml b/modules/launcher/services/Actions.qml
+index b1990cd..86d102c 100644
+--- a/modules/launcher/services/Actions.qml
++++ b/modules/launcher/services/Actions.qml
+@@ -16,6 +16,34 @@ Searcher {
+         return search.slice(GlobalConfig.launcher.actionPrefix.length);
+     }
+ 
++    // Modes ajoutés au launcher (voir ContentList), proposés comme les actions d'origine.
++    readonly property var extraActions: [
++        {
++            name: "Emoji",
++            icon: "mood",
++            description: "Chercher un emoji ou un symbole et le coller",
++            command: ["autocomplete", "emoji"]
++        },
++        {
++            name: "Fichiers",
++            icon: "folder_open",
++            description: "Chercher un fichier dans le dossier personnel",
++            command: ["autocomplete", "files"]
++        },
++        {
++            name: "Web",
++            icon: "travel_explore",
++            description: "Chercher sur le web (ou directement >g, >yt, >gh, >w…)",
++            command: ["autocomplete", "web"]
++        },
++        {
++            name: "Presse-papiers",
++            icon: "content_paste",
++            description: "Historique du presse-papiers",
++            command: ["autocomplete", "clipboard"]
++        }
++    ]
++
+     list: variants.instances
+     useFuzzy: GlobalConfig.launcher.useFuzzy.actions
+ 
+@@ -24,7 +52,7 @@ Searcher {
+ 
+         model: {
+             const enableDangerous = GlobalConfig.launcher.enableDangerousActions;
+-            return GlobalConfig.launcher.actions.values.filter(a => a.enabled && (enableDangerous || !a.dangerous));
++            return [...GlobalConfig.launcher.actions.values.filter(a => a.enabled && (enableDangerous || !a.dangerous)), ...root.extraActions];
+         }
+ 
+         Action {}
 diff --git a/modules/lock/LockSurface.qml b/modules/lock/LockSurface.qml
-index 782cb71..7c1a6ce 100644
+index 782cb71..3c2f2cd 100644
 --- a/modules/lock/LockSurface.qml
 +++ b/modules/lock/LockSurface.qml
 @@ -189,7 +189,7 @@ WlSessionLockSurface {
@@ -901,10 +1164,216 @@ index 782cb71..7c1a6ce 100644
  
          Visual {
 -            source: Wallpapers.current
-+            source: WallStudio.playableFor(Wallpapers.current)
++            source: WallStudio.playableFor(WallStudio.wallFor(root.screen?.name ?? ""))
              playing: PersistentState.wallpaperPlaying
          }
      }
+diff --git a/modules/nexus/PageCompRegistry.qml b/modules/nexus/PageCompRegistry.qml
+index 1b725a3..657ad40 100644
+--- a/modules/nexus/PageCompRegistry.qml
++++ b/modules/nexus/PageCompRegistry.qml
+@@ -11,6 +11,7 @@ import qs.modules.nexus.pages
+ import qs.modules.nexus.pages.apps
+ import qs.modules.nexus.pages.audio
+ import qs.modules.nexus.pages.bluetooth
++import qs.modules.nexus.pages.extras
+ import qs.modules.nexus.pages.network
+ import qs.modules.nexus.pages.panels
+ import qs.modules.nexus.pages.services
+@@ -175,6 +176,17 @@ QtObject {
+                 }
+             }
+         },
++        Component {
++            // Extras
++            StackPage {
++                Component {
++                    ExtrasPage {}
++                }
++                Component {
++                    WebEngines {}
++                }
++            }
++        },
+ 
+         // About
+         Component {
+diff --git a/modules/nexus/PageRegistry.qml b/modules/nexus/PageRegistry.qml
+index 90de4fb..9c3d59b 100644
+--- a/modules/nexus/PageRegistry.qml
++++ b/modules/nexus/PageRegistry.qml
+@@ -82,6 +82,13 @@ QtObject {
+             description: Tr.tr("UI language, weather location, display units"),
+             category: "shell"
+         },
++        {
++            // Réglages des ajouts (extras.json) : même position dans PageCompRegistry.
++            label: "Extras",
++            icon: "widgets",
++            description: "Vue d'ensemble, recherche de fichiers et web",
++            category: "shell"
++        },
+ 
+         // About
+         {
+diff --git a/modules/nexus/pages/WallpaperAndStyle.qml b/modules/nexus/pages/WallpaperAndStyle.qml
+index c3f3f5d..5d64273 100644
+--- a/modules/nexus/pages/WallpaperAndStyle.qml
++++ b/modules/nexus/pages/WallpaperAndStyle.qml
+@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
+ 
+ import QtQuick
+ import QtQuick.Layouts
++import Quickshell
+ import Caelestia.Components
+ import Caelestia.Config
+ import Caelestia.I18n
+@@ -16,6 +17,79 @@ PageBase {
+ 
+     title: Tr.tr("Wallpaper & style")
+ 
++    // Écran visé par le choix d'un fond : tous (fond commun), ou un seul, qui garde alors son
++    // propre fond. L'aperçu montre le fond de la cible.
++    readonly property ShellScreen targetScreen: Screens.screens.find(s => s.name === WallStudio.target) ?? nState.screen
++
++    Component.onCompleted: WallStudio.resetTarget(nState.screen?.name ?? "")
++    Component.onDestruction: WallStudio.target = "" // Rien d'autre ne doit viser cet écran par mégarde.
++
++    component ScreenTile: Item {
++        id: tile
++
++        required property string modelData // "" : tous les écrans
++        readonly property bool selected: WallStudio.target === modelData
++        readonly property bool own: !!WallStudio.screenWalls[modelData]
++
++        implicitWidth: 144
++        implicitHeight: tileLayout.implicitHeight
++
++        ColumnLayout {
++            id: tileLayout
++
++            anchors.left: parent.left
++            anchors.right: parent.right
++            spacing: Tokens.spacing.extraSmall
++
++            ClipRect {
++                Layout.fillWidth: true
++                implicitHeight: Math.round(width * 9 / 16)
++                radius: Tokens.rounding.medium
++                color: Colours.tPalette.m3surfaceContainer
++
++                Image {
++                    anchors.fill: parent
++                    source: WallStudio.fileUrl(Wallpapers.stillFor(WallStudio.wallFor(tile.modelData)))
++                    sourceSize: Qt.size(288, 162)
++                    asynchronous: true
++                    fillMode: Image.PreserveAspectCrop
++                }
++
++                StyledRect {
++                    anchors.fill: parent
++                    radius: Tokens.rounding.medium
++                    color: "transparent"
++                    border.width: tile.selected ? 3 : 0
++                    border.color: Colours.palette.m3primary
++                }
++            }
++
++            StyledText {
++                Layout.fillWidth: true
++                text: WallStudio.targetName(tile.modelData)
++                color: tile.selected ? Colours.palette.m3primary : Colours.palette.m3onSurface
++                font: Tokens.font.label.medium
++                horizontalAlignment: Text.AlignHCenter
++                elide: Text.ElideRight
++            }
++
++            StyledText {
++                Layout.fillWidth: true
++                Layout.bottomMargin: Tokens.padding.small
++                text: tile.modelData === "" || !tile.own ? "fond commun" : "fond propre"
++                color: Colours.palette.m3outline
++                font: Tokens.font.label.small
++                horizontalAlignment: Text.AlignHCenter
++                elide: Text.ElideRight
++            }
++        }
++
++        StateLayer {
++            radius: Tokens.rounding.medium
++            onClicked: WallStudio.setTarget(tile.modelData)
++        }
++    }
++
+     ColumnLayout {
+         anchors.horizontalCenter: parent.horizontalCenter
+         anchors.top: parent.top
+@@ -27,13 +101,14 @@ PageBase {
+ 
+             Layout.alignment: Qt.AlignHCenter
+             implicitWidth: {
+-                const screen = root.nState.screen;
++                const screen = root.targetScreen;
+                 return implicitHeight / screen.height * screen.width;
+             }
+             implicitHeight: {
+-                const screen = root.nState.screen;
++                const screen = root.targetScreen;
+                 const cWidth = root.cappedWidth;
+-                return Math.min(Math.round(cWidth * 0.4), cWidth / screen.width * screen.height);
++                // Plus bas quand la rangée des écrans s'affiche dessous.
++                return Math.min(Math.round(cWidth * (WallStudio.screenNames.length > 1 ? 0.32 : 0.4)), cWidth / screen.width * screen.height);
+             }
+ 
+             color: Colours.tPalette.m3surfaceContainer
+@@ -71,6 +146,7 @@ PageBase {
+ 
+             WallpaperImpl {
+                 anchors.fill: parent
++                screenName: WallStudio.target
+                 opacity: Config.background.wallpaperEnabled ? 1 : 0
+ 
+                 Behavior on opacity {
+@@ -81,6 +157,39 @@ PageBase {
+             }
+         }
+ 
++        // Un fond par écran : tous les écrans détectés, plus « tous » pour le fond commun.
++        RowLayout {
++            Layout.alignment: Qt.AlignHCenter
++            visible: WallStudio.screenNames.length > 1
++            spacing: Tokens.spacing.medium
++
++            Repeater {
++                model: ["", ...WallStudio.screenNames]
++
++                ScreenTile {}
++            }
++        }
++
++        StyledText {
++            Layout.alignment: Qt.AlignHCenter
++            Layout.topMargin: -parent.spacing / 2
++            visible: WallStudio.screenNames.length > 1 && WallStudio.target !== ""
++            text: `Le fond choisi ne s'applique qu'à ${WallStudio.target} ; les couleurs du thème restent celles du fond commun.`
++            color: Colours.palette.m3outline
++            font: Tokens.font.label.small
++        }
++
++        IconTextButton {
++            Layout.alignment: Qt.AlignHCenter
++            visible: WallStudio.target !== "" && !!WallStudio.screenWalls[WallStudio.target]
++            icon: "link"
++            text: `Reprendre le fond commun sur ${WallStudio.target}`
++            font: Tokens.font.body.small
++            isRound: true
++            type: IconTextButton.Text
++            onClicked: WallStudio.setScreenWall(WallStudio.target, "")
++        }
++
+         ButtonRow {
+             Layout.alignment: Qt.AlignHCenter
+             spacing: Tokens.spacing.small
 diff --git a/services/Colours.qml b/services/Colours.qml
 index 0b64400..6b1e4a0 100644
 --- a/services/Colours.qml
@@ -953,10 +1422,17 @@ index 0b64400..6b1e4a0 100644
  
      Timer {
 diff --git a/services/Wallpapers.qml b/services/Wallpapers.qml
-index 9a8bdac..87a910f 100644
+index 9a8bdac..64ae8f0 100644
 --- a/services/Wallpapers.qml
 +++ b/services/Wallpapers.qml
-@@ -21,6 +21,21 @@ Searcher {
+@@ -16,11 +16,27 @@ Searcher {
+     readonly property string fallback: Quickshell.shellPath("assets/wallpaper.webp")
+ 
+     property bool showPreview: false
+-    readonly property string current: showPreview ? previewPath : actualCurrent
++    // Fond commun affiché : l'aperçu du studio quand il vise tous les écrans, sinon le fond appliqué.
++    readonly property string current: showPreview && WallStudio.target === "" ? previewPath : actualCurrent
+     property string previewPath
      property string actualCurrent
      property bool previewColourLock
      property bool pendingPreviewClear
@@ -978,7 +1454,7 @@ index 9a8bdac..87a910f 100644
  
      function getCategoryFor(w: FileSystemEntry): string {
          let category = w.parentDir.slice(Paths.wallsdir.length + 1);
-@@ -30,24 +45,44 @@ Searcher {
+@@ -30,33 +46,66 @@ Searcher {
      }
  
      function setRandom(): void {
@@ -986,21 +1462,36 @@ index 9a8bdac..87a910f 100644
 +        WallStudio.shuffle("all");
      }
  
-+    // Passe par le studio : thème mémorisé pour ce fond + transition choisie.
++    // Passe par le studio : écran visé, thème mémorisé pour ce fond, transition choisie.
      function setWallpaper(path: string): void {
 -        actualCurrent = path;
 -        Quickshell.execDetached(["caelestia", "wallpaper", "-f", path, ...smartArg]);
-+        WallStudio.apply(path, false);
++        WallStudio.applyToTarget(path, false);
++    }
++
++    function stopColourPreview(): void {
++        ++previewRequestId;
++        if (previewColourLock)
++            pendingPreviewClear = true;
++        else
++            Colours.showPreview = false;
      }
  
++    // Aperçu sur le bureau du fond `path`, pour la cible du studio.
      function preview(path: string): void {
-+        if (path !== current)
++        if (path !== (showPreview ? previewPath : WallStudio.targetWall))
 +            WallStudio.nextTransition();
          previewPath = path;
          showPreview = true;
  
 -        if (Colours.scheme === "dynamic")
 -            getPreviewColoursProc.running = true;
++        // Les couleurs du thème viennent du fond commun : pas d'aperçu de couleurs pour un seul écran.
++        if (WallStudio.target !== "") {
++            stopColourPreview();
++            return;
++        }
++
 +        if (Colours.scheme === "dynamic" && path) {
 +            const key = WallStudio.previewKey(path);
 +            ++previewRequestId; // Un résultat arrivé trop tard pour un autre fond est ignoré.
@@ -1021,14 +1512,14 @@ index 9a8bdac..87a910f 100644
      }
  
      function stopPreview(): void {
-+        if (showPreview && previewPath !== actualCurrent)
++        if (showPreview && previewPath !== WallStudio.targetWall)
 +            WallStudio.nextTransition();
          showPreview = false;
-+        ++previewRequestId;
-         if (previewColourLock)
-             pendingPreviewClear = true;
-         else
-@@ -55,8 +90,10 @@ Searcher {
+-        if (previewColourLock)
+-            pendingPreviewClear = true;
+-        else
+-            Colours.showPreview = false;
++        stopColourPreview();
      }
  
      onPreviewColourLockChanged: {
@@ -1040,7 +1531,18 @@ index 9a8bdac..87a910f 100644
      }
  
      list: wallpapers.entries
-@@ -114,9 +151,26 @@ Searcher {
+@@ -71,8 +120,9 @@ Searcher {
+             return root.actualCurrent;
+         }
+ 
++        // Fond commun à tous les écrans (un écran qui a son propre fond le garde).
+         function set(path: string): void {
+-            root.setWallpaper(path);
++            WallStudio.apply(path, false);
+         }
+ 
+         function list(): string {
+@@ -114,9 +164,26 @@ Searcher {
      Process {
          id: getPreviewColoursProc
  
@@ -1069,7 +1571,7 @@ index 9a8bdac..87a910f 100644
                  Colours.showPreview = true;
              }
 diff --git a/shell.qml b/shell.qml
-index 060fbef..4e470ac 100644
+index 060fbef..460b674 100644
 --- a/shell.qml
 +++ b/shell.qml
 @@ -2,8 +2,15 @@
@@ -1088,3 +1590,19 @@ index 060fbef..4e470ac 100644
  import QtQuick
  import Quickshell
  import Caelestia.Config
+@@ -12,6 +19,7 @@ import qs.modules.areapicker
+ import qs.modules.background
+ import qs.modules.drawers
+ import qs.modules.lock
++import qs.modules.extras.overview
+ import qs.daemons
+ 
+ ShellRoot {
+@@ -44,6 +52,7 @@ ShellRoot {
+     Background {}
+     Drawers {}
+     AreaPicker {}
++    Overview {}
+     Lock {
+         id: lock
+     }

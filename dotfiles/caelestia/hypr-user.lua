@@ -49,6 +49,25 @@ hl.bind("SUPER + T", hl.dsp.exec_cmd("kitty"))
 hl.unbind("SUPER + W")
 hl.bind("SUPER + W", hl.dsp.exec_cmd("zen-browser"))
 
+-- Les applis ne peuvent pas s'agrandir d'elles-mêmes : kitty mémorise son dernier état et
+-- redemande « agrandi » à chaque lancement. Le raccourci d'agrandissement marche toujours.
+hl.window_rule({
+    name = "suppress-maximize-events",
+    match = { class = ".*" },
+    suppress_event = "maximize",
+})
+
+-- Vue d'ensemble des espaces de travail : miniatures des fenêtres, glisser-déposer, recherche.
+hl.unbind("SUPER + TAB")
+hl.bind("SUPER + TAB", hl.dsp.global("caelestia:overview"))
+
+-- Emoji et symboles : sélecteur intégré au launcher. « code:59 » est la touche « ; » en AZERTY
+-- (Super+. d'origine est inaccessible sur ce clavier : le point demande Maj).
+for _, key in ipairs({ "SUPER + code:59", "SUPER + Period" }) do
+    hl.unbind(key)
+    hl.bind(key, hl.dsp.global("caelestia:emoji"))
+end
+
 -- Fonds d'écran : studio intégré au shell (vidéos natives, transitions, couleurs par fond).
 -- Super+Alt+W/X/C ouvrent le studio ; un second appui le referme.
 for _, key in ipairs({ "SUPER + ALT + W", "SUPER + ALT + X", "SUPER + ALT + C" }) do

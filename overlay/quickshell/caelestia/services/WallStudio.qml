@@ -8,8 +8,9 @@ import Caelestia.State
 import qs.services
 import qs.utils
 
-// Studio de fonds d'écran : favoris, thème mémorisé par fond, transitions, diaporama et
-// cache vidéo (copies à la taille de l'écran, aperçus de survol) préparé par caelestia-wallpaper-cache.
+// Studio de fonds d'écran : favoris, thème mémorisé par fond, fond propre à un écran,
+// transitions, diaporama et cache vidéo (copies à la taille de l'écran, aperçus de survol)
+// préparé par caelestia-wallpaper-cache.
 Singleton {
     id: root
 
@@ -32,7 +33,20 @@ Singleton {
     property int slideshowMinutes: 0
     property string slideshowPool: "all"
     property string filter: "all"
+    // Fond propre à un écran (nom de l'écran -> chemin). Un écran absent de la table affiche le
+    // fond commun : celui de `caelestia wallpaper`, dont sont tirées les couleurs du thème.
+    property var screenWalls: ({})
     property bool stateLoaded
+
+    // Écran visé par le studio et les réglages ("" = tous les écrans). Non mémorisé.
+    property string target
+    readonly property string targetWall: wallFor(target)
+    readonly property list<string> screenNames: Screens.screens.map(s => s.name)
+
+    onScreenNamesChanged: {
+        if (target && !screenNames.includes(target))
+            target = "";
+    }
 
     // Transition du prochain changement de fond (clé de Caelestia.Shaders, "" = celle de la config)
     property string activeTransition
@@ -280,8 +294,81 @@ Singleton {
             activeTransition = pickRandom();
     }
 
+    // ---- Fond par écran ----
+
+    function wallFor(screen: string): string {
+        return (screen && screenWalls[screen]) || Wallpapers.actualCurrent;
+    }
+
+    function hasOwnWall(screen: string): bool {
+        return !!(screen && screenWalls[screen]);
+    }
+
+    // Donne à un écran son propre fond ; "" le remet sur le fond commun.
+    function setScreenWall(screen: string, path: string): void {
+        if (!screen || (screenWalls[screen] ?? "") === path)
+            return;
+        if (path !== wallFor(screen))
+            nextTransition();
+        const next = Object.assign({}, screenWalls);
+        if (path)
+            next[screen] = path;
+        else
+            delete next[screen];
+        screenWalls = next;
+        save();
+    }
+
+    function setTarget(screen: string): void {
+        target = screenNames.includes(screen) ? screen : "";
+    }
+
+    // Cible proposée à l'ouverture du studio ou des réglages sur un écran : cet écran s'il a
+    // son propre fond (c'est lui qu'on voit), sinon tous les écrans.
+    function resetTarget(screen: string): void {
+        target = hasOwnWall(screen) && screenNames.includes(screen) ? screen : "";
+    }
+
+    function cycleTarget(step: int): void {
+        const all = ["", ...screenNames];
+        target = all[(all.indexOf(target) + step + all.length) % all.length];
+    }
+
+    function targetName(screen: string): string {
+        return screen || "Tous les écrans";
+    }
+
+    // Au moins un écran branché a son propre fond.
+    readonly property bool hasOwnWalls: screenNames.some(s => !!screenWalls[s])
+
+    // `path` est déjà ce qu'affiche la cible (rien à appliquer).
+    function isTargetWall(path: string): bool {
+        if (target)
+            return path === wallFor(target);
+        return path === Wallpapers.actualCurrent && !hasOwnWalls;
+    }
+
+    // Choix fait dans le studio ou les réglages : fond de l'écran visé, ou fond commun à tous
+    // les écrans (les fonds propres sont alors oubliés).
+    function applyToTarget(path: string, force: bool): void {
+        if (!path)
+            return;
+        if (target) {
+            setScreenWall(target, path);
+            return;
+        }
+        if (Object.keys(screenWalls).length > 0) {
+            if (path === Wallpapers.actualCurrent)
+                nextTransition(); // apply() n'a alors rien à faire.
+            screenWalls = ({});
+            save();
+        }
+        apply(path, force);
+    }
+
     // ---- Application ----
 
+    // Change le fond commun (et les couleurs du thème) ; les fonds propres ne bougent pas.
     function apply(path: string, force: bool): void {
         if (!path)
             return;
@@ -324,13 +411,21 @@ Singleton {
         return all;
     }
 
+    function randomFrom(poolName: string, except: string): string {
+        let candidates = pool(poolName || "all").filter(w => w.path !== except);
+        if (candidates.length === 0)
+            candidates = pool("all").filter(w => w.path !== except);
+        return candidates[Math.floor(Math.random() * candidates.length)]?.path ?? "";
+    }
+
+    // Fond au hasard pour la cible (bouton du studio et des réglages).
     function shuffle(poolName: string): void {
-        let candidates = pool(poolName || "all").filter(w => w.path !== Wallpapers.actualCurrent);
-        if (candidates.length === 0)
-            candidates = pool("all").filter(w => w.path !== Wallpapers.actualCurrent);
-        if (candidates.length === 0)
-            return;
-        Wallpapers.setWallpaper(candidates[Math.floor(Math.random() * candidates.length)].path);
+        applyToTarget(randomFrom(poolName, targetWall), false);
+    }
+
+    // Fond commun au hasard (diaporama, commande).
+    function shuffleCommon(poolName: string): void {
+        apply(randomFrom(poolName, Wallpapers.actualCurrent), false);
     }
 
     function setSlideshow(minutes: int, poolName: string): void {
@@ -376,6 +471,12 @@ Singleton {
         slideshowMinutes = Number.isInteger(data.slideshowMinutes) ? data.slideshowMinutes : 0;
         slideshowPool = typeof data.slideshowPool === "string" ? data.slideshowPool : "all";
         filter = typeof data.filter === "string" ? data.filter : "all";
+        const walls = {};
+        for (const [screen, path] of Object.entries(data.screens && typeof data.screens === "object" ? data.screens : {})) {
+            if (typeof path === "string" && path)
+                walls[screen] = path;
+        }
+        screenWalls = walls;
         activeTransition = transition === "random" ? pickRandom() : (transition === "config" ? "" : transition);
         stateLoaded = true;
     }
@@ -390,7 +491,8 @@ Singleton {
                 transition: root.transition,
                 slideshowMinutes: root.slideshowMinutes,
                 slideshowPool: root.slideshowPool,
-                filter: root.filter
+                filter: root.filter,
+                screens: root.screenWalls
             }, null, 2))
     }
 
@@ -428,7 +530,7 @@ Singleton {
         interval: Math.max(1, root.slideshowMinutes) * 60000
         onTriggered: {
             if (!RuntimeState.gameMode)
-                root.shuffle(root.slideshowPool);
+                root.shuffleCommon(root.slideshowPool);
         }
     }
 
@@ -452,7 +554,18 @@ Singleton {
 
     IpcHandler {
         function shuffle(pool: string): void {
-            root.shuffle(pool);
+            root.shuffleCommon(pool);
+        }
+
+        // Fond propre à un écran ; chemin vide : retour au fond commun.
+        function setFor(screen: string, path: string): void {
+            if (root.screenNames.includes(screen))
+                root.setScreenWall(screen, path);
+        }
+
+        // Une ligne par écran : nom, tabulation, fond affiché, tabulation, « propre » ou « commun ».
+        function screens(): string {
+            return root.screenNames.map(s => `${s}\t${root.wallFor(s)}\t${root.hasOwnWall(s) ? "propre" : "commun"}`).join("\n");
         }
 
         function setTransition(name: string): void {

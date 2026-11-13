@@ -210,6 +210,17 @@ Singleton {
         Quickshell.execDetached(cmd);
     }
 
+    // Copie un texte et, sauf copyOnly, le colle dans la fenêtre active (emoji, chemin…).
+    function pasteText(text: string, copyOnly: bool): void {
+        const cmd = [pasteTool];
+        if (copyOnly)
+            cmd.push("--copy");
+        else if (isTerminal())
+            cmd.push("--terminal");
+        cmd.push("--text", text);
+        Quickshell.execDetached(cmd);
+    }
+
     function remove(entry: var): void {
         if (!entry)
             return;

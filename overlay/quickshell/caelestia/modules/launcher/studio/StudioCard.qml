@@ -22,7 +22,7 @@ Item {
     readonly property bool isCurrent: PathView.isCurrentItem
     readonly property var meta: WallStudio.items[path] ?? null
     readonly property bool isVideo: WallStudio.isVideo(path)
-    readonly property bool isActual: path === Wallpapers.actualCurrent
+    readonly property bool isActual: path === WallStudio.targetWall
     readonly property bool isFavourite: WallStudio.favourites.includes(path)
     readonly property bool hasTheme: {
         WallStudio.themes;

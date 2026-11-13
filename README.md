@@ -2,7 +2,7 @@
 
 Overlay portable de la configuration Caelestia/Hyprland de `uslo-75` pour Arch Linux.
 
-Il installe les personnalisations utiles sans recopier la configuration matérielle des écrans : raccourcis AZERTY, studio de fonds d'écran et historique du presse-papiers intégrés au shell, thèmes dynamiques mémorisés par fond, icône Proton Mail dans la barre, services de maintenance et images de profil.
+Il installe les personnalisations utiles sans recopier la configuration matérielle des écrans : raccourcis AZERTY, vue d'ensemble des espaces de travail, studio de fonds d'écran et historique du presse-papiers intégrés au shell, thèmes dynamiques mémorisés par fond, icône Proton Mail dans la barre, services de maintenance et images de profil.
 
 ## Studio de fonds d'écran (`Super+Alt+W`)
 
@@ -11,8 +11,35 @@ Il installe les personnalisations utiles sans recopier la configuration matérie
 - Filtres Tous / Images / Animés / Favoris (`Tab`), favoris (`Ctrl+D`), carte au hasard (`Ctrl+R`), lecture/pause (`Ctrl+P`), diaporama (5 min à 1 h), qualité vidéo.
 - Couleurs mémorisées par fond (`Ctrl+M`) : mode et variante, avec les pastilles réelles de chaque variante pour ce fond, appliqués en une seule passe (`caelestia-wallpaper-apply`).
 - `caelestia-wallpaper-cache` prépare en arrière-plan des copies à la hauteur de l'écran (4K → 1080p, 3 à 4× moins de CPU), des planches d'aperçu (6 s de vidéo dans une seule texture compressée, animée par un shader) et les métadonnées (`~/.cache/caelestia/wallpaper-video/index.json`).
-- La vidéo se met en pause, lecteur déchargé, quand une fenêtre plein écran ou le mode jeu couvre l'écran.
+- **Un fond par écran** : le menu des écrans (`Ctrl+E`) vise « Tous les écrans » ou un seul. Un écran visé seul garde son propre fond, les autres affichent le fond commun ; les couleurs du thème restent celles du fond commun. « Reprendre le fond commun » retire le fond propre, et appliquer à tous les écrans les retire tous. Le même choix existe dans les réglages du shell (page « Wallpaper & style », une vignette par écran détecté) et en commande : `caelestia shell wallstudio setFor DP-1 /chemin/du/fond` (chemin vide : fond commun), `caelestia shell wallstudio screens` pour la liste. Le diaporama et `caelestia shell wallpaper set` ne changent que le fond commun.
+- La vidéo se met en pause, lecteur déchargé, quand une fenêtre en vrai plein écran ou le mode jeu couvre l'écran (pas pour une fenêtre seulement agrandie, qui laisse voir le fond).
+- Hyprland 0.57 laisse invisible une couche de fond créée pendant qu'une fenêtre est en plein écran sur son écran (shell redémarré pendant une vidéo ou un jeu) : le fond de cet écran est re-créé dès que le plein écran se termine (`modules/background/Background.qml`).
 - Fluidité : créer ou détruire un lecteur vidéo bloque l'interface (~80 ms avec le décodeur NVIDIA). Les mini-clips n'en utilisent donc aucun, les aperçus du bureau passent par une image fixe superposée au fond en cours, et le lecteur du fond ne change qu'une fois le studio refermé. Les animations du shell suivent la fréquence de chaque écran (`QSG_USE_SIMPLE_ANIMATION_DRIVER` dans `shell.qml`, à retirer pour revenir à l'horloge de Qt).
+
+## Vue d'ensemble des espaces de travail (`Super+Tab`)
+
+- Grille de tous les espaces de travail (2 × 5 par défaut) avec les fenêtres en miniature, mises à jour en direct et placées comme sur l'écran ; les espaces spéciaux occupés sont listés dessous.
+- Clic sur une fenêtre pour y aller, clic dans le vide pour aller à l'espace, glisser une miniature vers une autre case pour déplacer la fenêtre (même vers un autre écran), clic molette pour la fermer.
+- Au clavier : taper pour chercher une fenêtre (titre, classe ou nom de l'appli), `Tab` pour passer de fenêtre en fenêtre, flèches pour choisir un espace, `Entrée` pour y aller, `Échap` pour fermer.
+- Module autonome (`modules/extras/overview/`), ouvert sur l'écran actif, y compris par-dessus une fenêtre en plein écran. Commande : `caelestia shell overview toggle`.
+
+## Modes ajoutés au launcher
+
+Ils se tapent après le préfixe d'action (`>`), apparaissent dans la liste des actions et vivent dans `modules/launcher/modes/`.
+
+- **Emoji et symboles** (`Super+;`, `>emoji` ou `>e`) : grille des emoji et des glyphes Nerd Font fournis par `caelestia emoji`, recherche par mots-clés (en anglais), derniers utilisés en tête. `Entrée` colle dans la fenêtre active, `Maj+Entrée` copie seulement.
+- **Fichiers** (`>files` ou `>f`) : recherche par nom dans le dossier personnel avec `ripgrep` (repli sur `find`). `Entrée` ouvre, `Maj+Entrée` ouvre le dossier, `Ctrl+Entrée` copie le chemin.
+- **Web** (`>web`, ou directement `>g`, `>yt`, `>gh`, `>w`, `>aw`, `>aur`) : ouvre la recherche dans le navigateur par défaut.
+
+## Réglages des ajouts (`~/.config/caelestia/extras.json`)
+
+Modifiables dans les réglages du shell, page « Extras » (`modules/nexus/pages/extras/`), ou directement dans le fichier : il est créé avec les valeurs par défaut au premier lancement, complété quand une version ajoute une section, et relu à chaud.
+
+- `overview` : `rows` et `columns` (taille de la grille), `livePreviews` (miniatures en continu, sinon une capture par seconde), `showSpecial` (espaces spéciaux), `dim` (assombrissement du bureau, de 0 à 1).
+- `files` : `roots` (dossiers parcourus, `~` par défaut), `hidden` (fichiers cachés), `maxResults`.
+- `web` : `engines`, la liste des moteurs (`key` tapée après `>`, `name`, `icon`, `url` où `%s` est la recherche). La page « Extras » permet d'en ajouter, d'en retirer et de changer leur adresse.
+
+Les fonds propres à chaque écran sont un état, pas un réglage : ils sont gardés avec les favoris du studio dans `~/.local/state/caelestia/wallstudio.json` (`screens`).
 
 ## Presse-papiers (`Super+V`)
 
@@ -77,6 +104,8 @@ Validation locale complète :
 | `Super+V` / `Super+Alt+V` | Ouvrir/fermer l'historique du presse-papiers |
 | `Ctrl+Maj+Alt+V` | Coller le dernier élément copié |
 | `Super+Alt+W` / `X` / `C` | Ouvrir/fermer le studio de fonds d'écran |
+| `Super+Tab` | Ouvrir/fermer la vue d'ensemble des espaces de travail |
+| `Super+;` | Ouvrir/fermer le sélecteur d'emoji et de symboles |
 
 ## Compatibilité et sécurité
 
