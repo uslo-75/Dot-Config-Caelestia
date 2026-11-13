@@ -1,0 +1,187 @@
+#!/usr/bin/env bash
+# Outils de capture du shell Caelestia : texte d'une zone (OCR), QR code (lecture d'une zone
+# ou création depuis le presse-papiers), pipette, GIF d'une zone.
+#
+#   caelestia-capture ocr [--langs fra+eng]
+#   caelestia-capture qr
+#   caelestia-capture qr-make
+#   caelestia-capture colour
+#   caelestia-capture gif [--fps 15] [--width 720] [--max 60] [--dir DOSSIER]
+#       enregistre jusqu'à Ctrl+C (ou SIGINT), puis convertit en GIF
+#
+# Options communes : --region "x,y LxH" (zone donnée au lieu d'une sélection à la souris) et
+# --stdout (le résultat est affiché au lieu d'être copié et annoncé : pour un script).
+# Chaque outil prévient par une notification, y compris quand un programme manque.
+set -u
+
+cmd="${1:-}"
+[ $# -gt 0 ] && shift
+
+langs=""
+fps=15
+width=720
+max=60
+dir=""
+geometry=""
+stdout=0
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --region) geometry="${2:-}"; shift 2 ;;
+        --stdout) stdout=1; shift ;;
+        --langs) langs="${2:-}"; shift 2 ;;
+        --fps) fps="${2:-15}"; shift 2 ;;
+        --width) width="${2:-720}"; shift 2 ;;
+        --max) max="${2:-60}"; shift 2 ;;
+        --dir) dir="${2:-}"; shift 2 ;;
+        *) shift ;;
+    esac
+done
+
+notify() {
+    [ "$stdout" = 1 ] && return 0
+    notify-send -a "Capture" "$@" 2>/dev/null || true
+}
+
+# Résultat : copié dans le presse-papiers, ou affiché avec --stdout.
+deliver() {
+    if [ "$stdout" = 1 ]; then
+        printf '%s\n' "$1"
+    else
+        printf '%s' "$1" | wl-copy
+    fi
+}
+
+need() {
+    command -v "$1" >/dev/null 2>&1 && return 0
+    notify "Outil manquant : $1" "$2"
+    exit 3
+}
+
+# Zone choisie à la souris ("x,y LxH"), ou donnée par --region ; vide si annulée.
+region() {
+    if [ -n "$geometry" ]; then
+        printf '%s' "$geometry"
+        return 0
+    fi
+    need slurp "Installe le paquet slurp."
+    slurp 2>/dev/null
+}
+
+output_dir() {
+    local d="$dir"
+    if [ -z "$d" ]; then
+        d="$(xdg-user-dir PICTURES 2>/dev/null || true)"
+        [ -n "$d" ] && [ "$d" != "$HOME" ] || d="$HOME/Pictures"
+        d="$d/Captures"
+    fi
+    d="${d/#\~/$HOME}"
+    mkdir -p "$d"
+    printf '%s' "$d"
+}
+
+case "$cmd" in
+ocr)
+    need grim "Installe le paquet grim."
+    need tesseract "Installe tesseract et les langues voulues (tesseract-data-fra, tesseract-data-eng)."
+    geo="$(region)"
+    [ -n "$geo" ] || exit 1
+    if [ -z "$langs" ]; then
+        langs="$(tesseract --list-langs 2>/dev/null | tail -n +2 | grep -v '^osd$' | paste -sd+)"
+    fi
+    [ -n "$langs" ] || { notify "Aucune langue installée pour tesseract" "Installe par exemple tesseract-data-fra."; exit 3; }
+    text="$(grim -g "$geo" - | tesseract -l "$langs" - - 2>/dev/null | sed -e 's/[[:space:]]*$//' -e '/./,$!d')"
+    # Lignes vides de fin retirées.
+    text="$(printf '%s\n' "$text" | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}')"
+    if [ -z "$text" ]; then
+        notify "Aucun texte reconnu" "Essaie une zone plus nette ou plus grande (langues : $langs)."
+        exit 2
+    fi
+    deliver "$text"
+    notify "Texte copié" "$(printf '%s' "$text" | head -c 300)"
+    ;;
+
+qr)
+    need grim "Installe le paquet grim."
+    need zbarimg "Installe le paquet zbar pour lire les QR codes."
+    geo="$(region)"
+    [ -n "$geo" ] || exit 1
+    tmp="$(mktemp --suffix=.png)"
+    grim -g "$geo" "$tmp"
+    data="$(zbarimg -q --raw "$tmp" 2>/dev/null | head -n 20)"
+    rm -f -- "$tmp"
+    if [ -z "$data" ]; then
+        notify "Aucun QR code trouvé" "Sélectionne une zone qui contient tout le code."
+        exit 2
+    fi
+    deliver "$data"
+    notify "QR code copié" "$(printf '%s' "$data" | head -c 300)"
+    ;;
+
+qr-make)
+    need qrencode "Installe le paquet qrencode."
+    text="$(wl-paste -n 2>/dev/null || true)"
+    if [ -z "$text" ]; then
+        notify "Presse-papiers vide" "Copie d'abord le texte ou le lien à transformer en QR code."
+        exit 2
+    fi
+    out="$(output_dir)/qr-$(date +%Y%m%d-%H%M%S).png"
+    if ! printf '%s' "$text" | qrencode -s 12 -m 2 -o "$out" 2>/dev/null; then
+        notify "QR code impossible" "Le texte copié est trop long pour un QR code."
+        exit 2
+    fi
+    if [ "$stdout" = 1 ]; then
+        printf '%s\n' "$out"
+    else
+        wl-copy --type image/png < "$out"
+    fi
+    notify -i "$out" "QR code créé et copié" "$(printf '%s' "$text" | head -c 120)"
+    ;;
+
+colour|color)
+    need hyprpicker "Installe le paquet hyprpicker."
+    c="$(hyprpicker -f hex 2>/dev/null | tail -n 1)"
+    [ -n "$c" ] || exit 1
+    printf '%s' "$c" | wl-copy
+    printf '%s\n' "$c"
+    ;;
+
+gif)
+    need ffmpeg "Installe le paquet ffmpeg."
+    need wf-recorder "Installe le paquet wf-recorder."
+    geo="$(region)"
+    [ -n "$geo" ] || exit 1
+    tmp="${XDG_RUNTIME_DIR:-/tmp}/caelestia-gif-$$.mp4"
+    wf-recorder -g "$geo" -f "$tmp" -y >/dev/null 2>&1 &
+    rec=$!
+    trap 'kill -INT "$rec" 2>/dev/null' INT TERM
+    # Arrêt automatique : un GIF long devient vite énorme.
+    ( sleep "$max"; kill -INT "$rec" 2>/dev/null ) &
+    guard=$!
+    notify -t 3000 "Enregistrement du GIF" "Arrête-le depuis la barre ou relance la commande ($max s au plus)."
+    wait "$rec" 2>/dev/null
+    wait "$rec" 2>/dev/null
+    kill "$guard" 2>/dev/null
+    if [ ! -s "$tmp" ]; then
+        notify "GIF vide" "L'enregistrement n'a rien donné."
+        rm -f -- "$tmp"
+        exit 2
+    fi
+    out="$(output_dir)/capture-$(date +%Y%m%d-%H%M%S).gif"
+    if ffmpeg -y -loglevel error -i "$tmp" -vf "fps=$fps,scale='min($width,iw)':-2:flags=lanczos,split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=5" "$out"; then
+        if [ "$stdout" = 1 ]; then
+            printf '%s\n' "$out"
+        else
+            printf 'file://%s\n' "$out" | wl-copy --type text/uri-list
+        fi
+        notify -i "$out" "GIF enregistré" "$out ($(du -h "$out" | cut -f1)) · copié"
+    else
+        notify "Conversion en GIF impossible" "ffmpeg a échoué."
+    fi
+    rm -f -- "$tmp"
+    ;;
+
+*)
+    sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+    exit 64
+    ;;
+esac

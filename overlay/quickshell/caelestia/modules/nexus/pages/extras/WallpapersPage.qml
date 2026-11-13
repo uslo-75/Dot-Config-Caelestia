@@ -23,7 +23,8 @@ PageBase {
     property string search
     // Écran visé dans cette fenêtre de réglages ("" : tous les écrans).
     readonly property string target: nState.wallTarget
-    readonly property string targetWall: WallStudio.wallFor(target)
+    readonly property string targetWall: WallStudio.wallOf(target)
+    readonly property var targets: WallStudio.targetsFor(nState.screen?.name ?? "")
     readonly property list<string> videoExtensions: ["mp4", "webm", "mkv", "mov", "avi", "m4v"]
     readonly property string featured: Quickshell.shellPath("assets/wallpaper.webp")
 
@@ -90,7 +91,7 @@ PageBase {
         return true;
     }
 
-    title: root.target ? `${Tr.tr("Wallpapers")} · ${root.target}` : Tr.tr("Wallpapers")
+    title: root.target ? `${Tr.tr("Wallpapers")} · ${WallStudio.targetName(root.target)}` : Tr.tr("Wallpapers")
     isSubPage: true
 
     ColumnLayout {
@@ -158,18 +159,18 @@ PageBase {
             }
 
             Item {
-                visible: WallStudio.screenNames.length > 1
+                visible: root.targets.length > 1
                 implicitWidth: Tokens.spacing.large
                 implicitHeight: 1
             }
 
             Repeater {
-                model: WallStudio.screenNames.length > 1 ? ["", ...WallStudio.screenNames] : []
+                model: root.targets.length > 1 ? root.targets : []
 
                 StudioChip {
                     required property string modelData
 
-                    icon: modelData === "" ? "select_all" : "desktop_windows"
+                    icon: WallStudio.targetIcon(modelData)
                     text: WallStudio.targetName(modelData)
                     checked: root.target === modelData
                     onClicked: root.nState.wallTarget = modelData
@@ -181,7 +182,7 @@ PageBase {
             Layout.fillWidth: true
             Layout.leftMargin: Tokens.padding.small
             visible: root.target !== ""
-            text: `Le fond choisi ne s'applique qu'à ${root.target} ; les couleurs du thème restent celles du fond commun.`
+            text: `Le fond choisi ne s'applique qu'${WallStudio.toTarget(root.target)} ; les couleurs du thème restent celles du fond commun.`
             color: Colours.palette.m3outline
             font: Tokens.font.label.small
             elide: Text.ElideRight

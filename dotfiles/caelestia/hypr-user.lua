@@ -68,6 +68,14 @@ for _, key in ipairs({ "SUPER + code:59", "SUPER + Period" }) do
     hl.bind(key, hl.dsp.global("caelestia:emoji"))
 end
 
+-- Minuteur et outils de capture du shell. Super+Maj+C lançait hyprpicker seul : la pipette du
+-- shell copie aussi la couleur, l'annonce et garde les dernières relevées.
+hl.bind("SUPER + ALT + T", hl.dsp.global("caelestia:timer"))
+hl.bind("SUPER + SHIFT + T", hl.dsp.global("caelestia:captureText"))
+hl.bind("SUPER + SHIFT + G", hl.dsp.global("caelestia:captureGif"))
+hl.unbind("SUPER + SHIFT + C")
+hl.bind("SUPER + SHIFT + C", hl.dsp.global("caelestia:colourPicker"))
+
 -- Fonds d'écran : studio intégré au shell (vidéos natives, transitions, couleurs par fond).
 -- Super+Alt+W/X/C ouvrent le studio ; un second appui le referme.
 for _, key in ipairs({ "SUPER + ALT + W", "SUPER + ALT + X", "SUPER + ALT + C" }) do

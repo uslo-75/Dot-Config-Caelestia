@@ -36,6 +36,9 @@ Singleton {
     // Fond propre à un écran (nom de l'écran -> chemin). Un écran absent de la table affiche le
     // fond commun : celui de `caelestia wallpaper`, dont sont tirées les couleurs du thème.
     property var screenWalls: ({})
+    // Fond propre à un espace de travail (nom de l'espace -> chemin) : il passe avant celui de
+    // l'écran tant que cet espace y est affiché.
+    property var workspaceWalls: ({})
     property bool stateLoaded
 
     readonly property list<string> screenNames: Screens.screens.map(s => s.name)
@@ -286,7 +289,7 @@ Singleton {
             activeTransition = pickRandom();
     }
 
-    // ---- Fond par écran ----
+    // ---- Fond par écran et par espace de travail ----
 
     function wallFor(screen: string): string {
         return (screen && screenWalls[screen]) || Wallpapers.actualCurrent;
@@ -311,52 +314,144 @@ Singleton {
         save();
     }
 
-    // Le studio et chaque fenêtre de réglages ont leur propre « cible » : l'écran visé par le
-    // choix d'un fond, "" pour tous les écrans. Les fonctions ci-dessous la reçoivent.
+    // Espace de travail affiché par un écran ("" s'il n'est pas connu).
+    function activeWorkspaceOf(screen: string): string {
+        const s = Screens.screens.find(x => x.name === screen);
+        return s ? (Hypr.monitorFor(s)?.activeWorkspace?.name ?? "") : "";
+    }
 
-    // Cible proposée à l'ouverture sur un écran : cet écran s'il a son propre fond (c'est lui
-    // qu'on voit), sinon tous les écrans.
+    // Écran où se trouve un espace de travail ("" s'il n'existe pas en ce moment).
+    function screenOfWorkspace(workspace: string): string {
+        return Hypr.workspaces.values.find(w => w.name === workspace)?.monitor?.name ?? "";
+    }
+
+    // Fond affiché en ce moment par un écran : celui de son espace de travail s'il en a un,
+    // sinon celui de l'écran.
+    function shownOn(screen: string): string {
+        const workspace = activeWorkspaceOf(screen);
+        return (workspace && workspaceWalls[workspace]) || wallFor(screen);
+    }
+
+    // Donne à un espace de travail son propre fond ; "" le remet sur le fond de son écran.
+    function setWorkspaceWall(workspace: string, path: string): void {
+        if (!workspace || (workspaceWalls[workspace] ?? "") === path)
+            return;
+        nextTransition();
+        const next = Object.assign({}, workspaceWalls);
+        if (path)
+            next[workspace] = path;
+        else
+            delete next[workspace];
+        workspaceWalls = next;
+        save();
+    }
+
+    // Le studio et chaque fenêtre de réglages ont leur propre « cible », que les fonctions
+    // ci-dessous reçoivent : "" pour tous les écrans, le nom d'un écran, ou "ws:" suivi du nom
+    // d'un espace de travail.
+
+    // Fond de la cible.
+    function wallOf(target: string): string {
+        if (target.startsWith("ws:")) {
+            const workspace = target.slice(3);
+            return workspaceWalls[workspace] || wallFor(screenOfWorkspace(workspace));
+        }
+        return wallFor(target);
+    }
+
+    // La cible a son propre fond (elle ne suit ni son écran, ni le fond commun).
+    function hasOwn(target: string): bool {
+        return target.startsWith("ws:") ? !!workspaceWalls[target.slice(3)] : hasOwnWall(target);
+    }
+
+    // Retire le fond propre de la cible.
+    function clearOwn(target: string): void {
+        if (target.startsWith("ws:"))
+            setWorkspaceWall(target.slice(3), "");
+        else
+            setScreenWall(target, "");
+    }
+
+    // Cibles proposées depuis un écran : tous les écrans, chaque écran, et l'espace de travail
+    // qu'il affiche.
+    function targetsFor(screen: string): var {
+        const workspace = activeWorkspaceOf(screen);
+        return workspace ? ["", ...screenNames, `ws:${workspace}`] : ["", ...screenNames];
+    }
+
+    // Cible proposée à l'ouverture sur un écran : ce qu'on y voit a son propre fond (espace de
+    // travail, sinon écran), sinon tous les écrans.
     function defaultTarget(screen: string): string {
+        const workspace = activeWorkspaceOf(screen);
+        if (workspace && workspaceWalls[workspace])
+            return `ws:${workspace}`;
         return hasOwnWall(screen) && screenNames.includes(screen) ? screen : "";
     }
 
     // "" (tous les écrans) si l'écran visé n'est plus branché.
     function validTarget(target: string): string {
-        return screenNames.includes(target) ? target : "";
+        return target.startsWith("ws:") || screenNames.includes(target) ? target : "";
     }
 
-    function nextTarget(target: string, step: int): string {
-        const all = ["", ...screenNames];
+    function nextTarget(target: string, step: int, screen: string): string {
+        const all = targetsFor(screen);
         return all[(Math.max(0, all.indexOf(target)) + step + all.length) % all.length];
     }
 
-    function targetName(screen: string): string {
-        return screen || "Tous les écrans";
+    function targetName(target: string): string {
+        if (!target)
+            return "Tous les écrans";
+        return target.startsWith("ws:") ? `Espace ${target.slice(3)}` : target;
     }
 
-    // Au moins un écran branché a son propre fond.
-    readonly property bool hasOwnWalls: screenNames.some(s => !!screenWalls[s])
+    function targetIcon(target: string): string {
+        if (!target)
+            return "select_all";
+        return target.startsWith("ws:") ? "space_dashboard" : "desktop_windows";
+    }
+
+    // « à l'espace 3 », « à DP-1 » : pour les libellés.
+    function toTarget(target: string): string {
+        return target.startsWith("ws:") ? `à l'espace ${target.slice(3)}` : `à ${target}`;
+    }
+
+    function ofTarget(target: string): string {
+        return target.startsWith("ws:") ? `de l'espace ${target.slice(3)}` : `de ${target}`;
+    }
+
+    // Ce que suit une cible sans fond propre.
+    function parentName(target: string): string {
+        return target.startsWith("ws:") ? "fond de l'écran" : "fond commun";
+    }
+
+    // Au moins un écran branché, ou un espace de travail, a son propre fond.
+    readonly property bool hasOwnWalls: screenNames.some(s => !!screenWalls[s]) || Object.keys(workspaceWalls).length > 0
 
     // `path` est déjà ce qu'affiche la cible (rien à appliquer).
     function isWallOf(target: string, path: string): bool {
         if (target)
-            return path === wallFor(target);
+            return path === wallOf(target);
         return path === Wallpapers.actualCurrent && !hasOwnWalls;
     }
 
-    // Choix fait dans le studio ou les réglages : fond de l'écran visé, ou fond commun à tous
-    // les écrans (les fonds propres sont alors oubliés).
+    // Choix fait dans le studio ou les réglages : fond de la cible, ou fond commun à tous les
+    // écrans (les fonds propres aux écrans et aux espaces de travail sont alors oubliés).
     function applyTo(target: string, path: string, force: bool): void {
         if (!path)
             return;
+        if (target.startsWith("ws:")) {
+            setWorkspaceWall(target.slice(3), path);
+            return;
+        }
         if (target) {
             setScreenWall(target, path);
             return;
         }
-        if (Object.keys(screenWalls).length > 0) {
+        if (Object.keys(screenWalls).length > 0 || Object.keys(workspaceWalls).length > 0) {
             if (path === Wallpapers.actualCurrent)
                 nextTransition(); // apply() n'a alors rien à faire.
             screenWalls = ({});
+            workspaceWalls = ({});
             save();
         }
         apply(path, force);
@@ -434,7 +529,7 @@ Singleton {
 
     // Fond au hasard pour une cible (bouton du studio et des réglages).
     function shuffleFor(target: string, poolName: string): void {
-        applyTo(target, randomFrom(poolName, wallFor(target)), false);
+        applyTo(target, randomFrom(poolName, wallOf(target)), false);
     }
 
     // Fond commun au hasard (diaporama, commande).
@@ -491,6 +586,12 @@ Singleton {
                 walls[screen] = path;
         }
         screenWalls = walls;
+        const wsWalls = {};
+        for (const [workspace, path] of Object.entries(data.workspaces && typeof data.workspaces === "object" ? data.workspaces : {})) {
+            if (typeof path === "string" && path)
+                wsWalls[workspace] = path;
+        }
+        workspaceWalls = wsWalls;
         activeTransition = transition === "random" ? pickRandom() : (transition === "config" ? "" : transition);
         stateLoaded = true;
     }
@@ -506,7 +607,8 @@ Singleton {
                 slideshowMinutes: root.slideshowMinutes,
                 slideshowPool: root.slideshowPool,
                 filter: root.filter,
-                screens: root.screenWalls
+                screens: root.screenWalls,
+                workspaces: root.workspaceWalls
             }, null, 2))
     }
 
@@ -580,6 +682,16 @@ Singleton {
         // Une ligne par écran : nom, tabulation, fond affiché, tabulation, « propre » ou « commun ».
         function screens(): string {
             return root.screenNames.map(s => `${s}\t${root.wallFor(s)}\t${root.hasOwnWall(s) ? "propre" : "commun"}`).join("\n");
+        }
+
+        // Fond propre à un espace de travail ; chemin vide : retour au fond de son écran.
+        function setForWorkspace(workspace: string, path: string): void {
+            root.setWorkspaceWall(workspace, path);
+        }
+
+        // Une ligne par espace de travail qui a son propre fond : nom, tabulation, fond.
+        function workspaces(): string {
+            return Object.entries(root.workspaceWalls).map(([w, path]) => `${w}\t${path}`).join("\n");
         }
 
         function setTransition(name: string): void {

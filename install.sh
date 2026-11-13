@@ -297,8 +297,18 @@ install_qml_overlay() {
     shell_version="$(pacman -Q caelestia-shell-git 2>/dev/null || pacman -Q caelestia-shell 2>/dev/null || true)"
     patch_hash="$({ sha256sum "$patch_file"; find "$overlay_dir" -type f -print0 | sort -z | xargs -0 sha256sum; printf '%s\n' "$shell_version"; } | sha256sum | awk '{print $1}')"
 
+    # Pour le shell (page « Updates » des réglages) : version du paquet d'où vient la copie
+    # modifiée, et dépôt d'où la reconstruire quand le paquet a changé.
+    record_qml_origin() {
+        (( DRY_RUN )) && return 0
+        install -d -m 0700 "$STATE_ROOT"
+        printf '%s\n' "$shell_version" > "$STATE_ROOT/qml-shell-version"
+        printf '%s\n' "$REPO_ROOT" > "$STATE_ROOT/repo-path"
+    }
+
     if [[ -f "$marker" && "$(cat "$marker" 2>/dev/null)" == "$patch_hash" && -f "$qml_dir/services/WallStudio.qml" ]]; then
         log "overlay QML déjà appliqué"
+        record_qml_origin
         return 0
     fi
 
@@ -321,6 +331,7 @@ install_qml_overlay() {
         rsync -rlt --delete "$tmp_qml/" "$qml_dir/"
         install -d -m 0700 "$STATE_ROOT"
         printf '%s\n' "$patch_hash" > "$marker"
+        record_qml_origin
     fi
     rm -rf -- "$tmp_qml"
 }

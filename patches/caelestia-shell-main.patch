@@ -27,16 +27,17 @@ index 1c7fbdb..b1f14ba 100644
                  to: 0
                  duration: 23500
 diff --git a/components/widgets/WallpaperImpl.qml b/components/widgets/WallpaperImpl.qml
-index 6229874..7c7293e 100644
+index 6229874..593ef93 100644
 --- a/components/widgets/WallpaperImpl.qml
 +++ b/components/widgets/WallpaperImpl.qml
-@@ -6,10 +6,22 @@ import Caelestia.Shaders
+@@ -6,10 +6,23 @@ import Caelestia.Shaders
  import Caelestia.State
  import qs.services
  
-+// Fond d'écran d'un écran : `live` lit le fond appliqué (celui de l'écran `screenName`, sinon le
-+// fond commun), `still` affiche une image fixe par-dessus (aperçu du studio, ou affiche du fond
-+// qu'on vient d'appliquer en attendant son lecteur).
++// Fond d'écran d'un écran : `live` lit le fond appliqué (`source` : celui de l'espace de travail
++// affiché par l'écran `screenName`, sinon celui de l'écran, sinon le fond commun), `still`
++// affiche une image fixe par-dessus (aperçu du studio, ou affiche du fond qu'on vient
++// d'appliquer en attendant son lecteur).
 +//
 +// Créer ou détruire un lecteur vidéo bloque l'interface ~80 ms à chaque fois (décodeur NVIDIA) :
 +// `live` ne suit donc jamais les aperçus, et son fichier ne change que caché derrière `still`,
@@ -53,22 +54,29 @@ index 6229874..7c7293e 100644
          CUtils.dependency(Config.background.wallpaperTransition);
          let transition = CUtils.enumToString(Config.background, "wallpaperTransition");
          if (!transition)
-@@ -18,34 +30,168 @@ Item {
+@@ -18,34 +31,176 @@ Item {
          transition = transition[0].toLowerCase() + transition.slice(1);
          return Shaders[transition] ?? Shaders.crossfade;
      }
--
--    property string source: Wallpapers.current
 +    // Figée au début de chaque transition : en changer pendant qu'elle joue ne fait pas de saut.
 +    property transitionShader runningShader: Shaders.crossfade
 +
-+    // Écran dont on affiche le fond ("" : le fond commun).
++    // Écran dont on affiche le fond ("" : aucun en particulier).
 +    property string screenName
-+    // Fond appliqué à cet écran.
-+    readonly property string source: WallStudio.wallFor(screenName)
-+    // L'aperçu du studio concerne cet écran (il vise tous les écrans, ou celui-ci).
-+    readonly property bool previewed: Wallpapers.showPreview && (Wallpapers.previewTarget === "" || Wallpapers.previewTarget === screenName)
-+
++    // Fond à afficher : par défaut, ce que montre cet écran en ce moment.
++    property string source: WallStudio.shownOn(screenName)
++    // L'aperçu du studio concerne cet écran : il vise tous les écrans, celui-ci, ou l'espace
++    // de travail qu'il affiche.
++    readonly property bool previewed: {
++        if (!Wallpapers.showPreview)
++            return false;
++        const target = Wallpapers.previewTarget;
++        if (target === "" || target === screenName)
++            return true;
++        return target.startsWith("ws:") && screenName !== "" && WallStudio.activeWorkspaceOf(screenName) === target.slice(3);
++    }
+ 
+-    property string source: Wallpapers.current
 +    // Fichier lu pour le fond appliqué (copie à la taille de l'écran pour les grandes vidéos).
 +    readonly property string playable: WallStudio.playableFor(source)
 +    // Image fixe du fond appliqué (l'affiche pour une vidéo), "" si elle n'existe pas encore.
@@ -99,8 +107,8 @@ index 6229874..7c7293e 100644
 +        const now = Date.now();
 +        if (now - appliedAt < 700)
 +            return false;
-+        // Un fond propre à l'écran ne change pas les couleurs du thème.
-+        if (Colours.scheme !== "dynamic" || WallStudio.hasOwnWall(screenName))
++        // Seul le fond commun change les couleurs du thème.
++        if (Colours.scheme !== "dynamic" || source !== Wallpapers.actualCurrent)
 +            return true;
 +        if (Colours.schemeLoadedAt >= appliedAt)
 +            return now - Colours.schemeLoadedAt >= 350;
@@ -118,12 +126,12 @@ index 6229874..7c7293e 100644
 +        } else if (shown !== live || live.source !== playable) {
 +            capture();
 +        }
- 
--    onSourceChanged: {
++
 +        if (previewStill === "" && target !== "")
 +            switchTimer.restart();
 +    }
-+
+ 
+-    onSourceChanged: {
 +    // Fige ce qui est à l'écran ; la transition part de cette capture.
 +    function capture(): void {
          transitionAnim.stop();
@@ -229,7 +237,7 @@ index 6229874..7c7293e 100644
      }
  
      ShaderEffectSource {
-@@ -55,14 +201,7 @@ Item {
+@@ -55,14 +210,7 @@ Item {
          live: false
          visible: false
  
@@ -245,7 +253,7 @@ index 6229874..7c7293e 100644
      }
  
      ShaderEffectSource {
-@@ -72,28 +211,33 @@ Item {
+@@ -72,28 +220,33 @@ Item {
          live: false
          visible: false
  
@@ -292,7 +300,7 @@ index 6229874..7c7293e 100644
      }
  
      ShaderEffect {
-@@ -105,6 +249,6 @@ Item {
+@@ -105,6 +258,6 @@ Item {
  
          anchors.fill: parent
          visible: root.transitionProgress < 1
@@ -301,7 +309,7 @@ index 6229874..7c7293e 100644
      }
  }
 diff --git a/daemons/Shortcuts.qml b/daemons/Shortcuts.qml
-index adc4e4c..9740cc4 100644
+index adc4e4c..c9e34b2 100644
 --- a/daemons/Shortcuts.qml
 +++ b/daemons/Shortcuts.qml
 @@ -11,7 +11,28 @@ Scope {
@@ -334,7 +342,7 @@ index adc4e4c..9740cc4 100644
  
      // qmllint disable unresolved-type
      CustomShortcut {
-@@ -75,6 +96,30 @@ Scope {
+@@ -75,6 +96,70 @@ Scope {
          }
      }
  
@@ -362,10 +370,50 @@ index adc4e4c..9740cc4 100644
 +        onPressed: root.toggleLauncherMode("emoji")
 +    }
 +
++    // qmllint disable unresolved-type
++    CustomShortcut {
++        // qmllint enable unresolved-type
++        name: "timer"
++        description: "Open the timer in the launcher"
++        onPressed: root.toggleLauncherMode("timer")
++    }
++
++    // qmllint disable unresolved-type
++    CustomShortcut {
++        // qmllint enable unresolved-type
++        name: "captureText"
++        description: "Copy the text of a screen region"
++        onPressed: Capture.ocr()
++    }
++
++    // qmllint disable unresolved-type
++    CustomShortcut {
++        // qmllint enable unresolved-type
++        name: "captureQr"
++        description: "Read a QR code from a screen region"
++        onPressed: Capture.qr()
++    }
++
++    // qmllint disable unresolved-type
++    CustomShortcut {
++        // qmllint enable unresolved-type
++        name: "colourPicker"
++        description: "Pick a colour on screen"
++        onPressed: Capture.colour()
++    }
++
++    // qmllint disable unresolved-type
++    CustomShortcut {
++        // qmllint enable unresolved-type
++        name: "captureGif"
++        description: "Start or stop recording a screen region as a GIF"
++        onPressed: Capture.gifToggle()
++    }
++
      // qmllint disable unresolved-type
      CustomShortcut {
          // qmllint enable unresolved-type
-@@ -144,6 +189,50 @@ Scope {
+@@ -144,6 +229,50 @@ Scope {
          target: "nexus"
      }
  
@@ -417,10 +465,10 @@ index adc4e4c..9740cc4 100644
          function info(title: string, message: string, icon: string): void {
              Toaster.toast(title, message, icon, Toast.Info);
 diff --git a/modules/background/Background.qml b/modules/background/Background.qml
-index 9730f62..055fd4f 100644
+index 9730f62..e51afca 100644
 --- a/modules/background/Background.qml
 +++ b/modules/background/Background.qml
-@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
+@@ -2,11 +2,13 @@ pragma ComponentBehavior: Bound
  
  import QtQuick
  import Quickshell
@@ -428,7 +476,13 @@ index 9730f62..055fd4f 100644
  import Quickshell.Wayland
  import Caelestia.Config
  import qs.components
-@@ -16,10 +17,58 @@ Variants {
+ import qs.components.containers
+ import qs.services
++import qs.modules.extras.widgets
+ 
+ Variants {
+     model: Screens.screens.filter(s => GlobalConfig.forScreen(s.name).background.enabled)
+@@ -16,10 +18,58 @@ Variants {
  
          required property ShellScreen modelData
  
@@ -487,7 +541,7 @@ index 9730f62..055fd4f 100644
          color: contentItem.Config.background.wallpaperEnabled ? "black" : "transparent"
          surfaceFormat.opaque: false
  
-@@ -34,6 +83,42 @@ Variants {
+@@ -34,6 +84,42 @@ Variants {
              component: win
          }
  
@@ -530,7 +584,7 @@ index 9730f62..055fd4f 100644
          Item {
              id: behindClock
  
-@@ -47,7 +132,10 @@ Variants {
+@@ -47,7 +133,10 @@ Variants {
                  anchors.fill: parent
                  active: Config.background.wallpaperEnabled
  
@@ -542,6 +596,22 @@ index 9730f62..055fd4f 100644
              }
  
              Visualiser {
+@@ -57,6 +146,15 @@ Variants {
+             }
+         }
+ 
++        // Widgets de bureau (ajout) : posés sur le fond, dans cette même fenêtre.
++        Loader {
++            anchors.fill: parent
++            active: Extras.widgets.enabled
++            sourceComponent: DesktopWidgets {
++                screen: win.modelData
++            }
++        }
++
+         Loader {
+             id: clockLoader
+ 
 diff --git a/modules/background/Wallpaper.qml b/modules/background/Wallpaper.qml
 index 0f6363e..eeb6378 100644
 --- a/modules/background/Wallpaper.qml
@@ -579,6 +649,36 @@ index 0f6363e..eeb6378 100644
 +        autoPaused: root.covered || RuntimeState.gameMode
      }
  }
+diff --git a/modules/bar/components/StatusIcons.qml b/modules/bar/components/StatusIcons.qml
+index 90ad09b..9057f39 100644
+--- a/modules/bar/components/StatusIcons.qml
++++ b/modules/bar/components/StatusIcons.qml
+@@ -8,6 +8,7 @@ import qs.components
+ import qs.services
+ import qs.utils
+ import qs.modules.bar.components.status
++import qs.modules.extras.status
+ 
+ StyledRect {
+     id: root
+@@ -57,6 +58,17 @@ StyledRect {
+ 
+         spacing: 0
+ 
++        // Témoins des ajouts (minuteur, mises à jour, GIF en cours) : seulement quand ils ont
++        // quelque chose à dire. Leur nom est celui de la bulle ouverte au survol.
++        Repeater {
++            model: ExtraStatus.names
++
++            ExtraStatusIcon {
++                Layout.bottomMargin: root.spacing
++                colour: root.colour
++            }
++        }
++
+         Repeater {
+             model: ScriptModel {
+                 id: model
 diff --git a/modules/bar/components/Tray.qml b/modules/bar/components/Tray.qml
 index de9aa95..75c7092 100644
 --- a/modules/bar/components/Tray.qml
@@ -617,10 +717,18 @@ index de9aa95..75c7092 100644
  
              TrayItem {}
 diff --git a/modules/bar/popouts/Content.qml b/modules/bar/popouts/Content.qml
-index 567b6cc..e975fb0 100644
+index 567b6cc..3bf1fe2 100644
 --- a/modules/bar/popouts/Content.qml
 +++ b/modules/bar/popouts/Content.qml
-@@ -14,8 +14,25 @@ Item {
+@@ -7,6 +7,7 @@ import Quickshell.Services.SystemTray
+ import Caelestia.Config
+ import qs.components
+ import qs.services
++import qs.modules.extras.status
+ 
+ Item {
+     id: root
+@@ -14,8 +15,25 @@ Item {
      required property PopoutState popouts
      readonly property Popout currentPopout: content.children.find(c => c.shouldBeActive) ?? null
      readonly property Item current: currentPopout?.item ?? null
@@ -647,7 +755,30 @@ index 567b6cc..e975fb0 100644
          acc[item.id] = i;
          return acc;
      }, {})
-@@ -126,7 +143,7 @@ Item {
+@@ -119,6 +137,22 @@ Item {
+             sourceComponent: KbLayout {}
+         }
+ 
++        // Bulles des témoins des ajouts (voir ExtraStatus).
++        Popout {
++            name: "timer"
++            sourceComponent: TimerPopout {}
++        }
++
++        Popout {
++            name: "updates"
++            sourceComponent: UpdatesPopout {}
++        }
++
++        Popout {
++            name: "gif"
++            sourceComponent: GifPopout {}
++        }
++
+         Popout {
+             name: "lockstatus"
+             sourceComponent: LockStatus {}
+@@ -126,7 +160,7 @@ Item {
  
          Repeater {
              model: ScriptModel {
@@ -865,7 +996,7 @@ index f5058f0..979370f 100644
      }
  }
 diff --git a/modules/launcher/ContentList.qml b/modules/launcher/ContentList.qml
-index a2e2590..1e17602 100644
+index a2e2590..d978003 100644
 --- a/modules/launcher/ContentList.qml
 +++ b/modules/launcher/ContentList.qml
 @@ -7,6 +7,9 @@ import qs.components
@@ -878,7 +1009,7 @@ index a2e2590..1e17602 100644
  
  Item {
      id: root
-@@ -19,9 +22,52 @@ Item {
+@@ -19,9 +22,57 @@ Item {
      required property int padding
      required property int rounding
  
@@ -902,6 +1033,11 @@ index a2e2590..1e17602 100644
 +                keywords: ["web", ...Extras.web.engines.map(e => e.key)],
 +                placeholder: "Rechercher sur le web…",
 +                icon: "travel_explore"
++            },
++            timer: {
++                keywords: ["timer", "minuteur", "t"],
++                placeholder: "Durée : 10, 25min, 1h30… puis un nom si tu veux",
++                icon: "timer"
 +            }
 +        })
 +    // Mot tapé entre le préfixe d'action et la première espace (">yt chats" -> "yt").
@@ -934,7 +1070,7 @@ index a2e2590..1e17602 100644
  
      anchors.horizontalCenter: parent.horizontalCenter
      anchors.bottom: parent.bottom
-@@ -48,14 +94,36 @@ Item {
+@@ -48,14 +99,36 @@ Item {
              name: "wallpapers"
  
              PropertyChanges {
@@ -973,7 +1109,7 @@ index a2e2590..1e17602 100644
          SequentialAnimation {
              Anim {
                  target: root
-@@ -93,28 +161,90 @@ Item {
+@@ -93,28 +166,102 @@ Item {
      Loader {
          id: wallpaperList
  
@@ -1024,7 +1160,7 @@ index a2e2590..1e17602 100644
 +
 +        anchors.fill: parent
 +
-+        sourceComponent: root.mode === "emoji" ? emojiMode : root.mode === "files" ? filesMode : root.mode === "web" ? webMode : null
++        sourceComponent: root.mode === "emoji" ? emojiMode : root.mode === "files" ? filesMode : root.mode === "web" ? webMode : root.mode === "timer" ? timerMode : null
 +    }
 +
 +    Component {
@@ -1055,6 +1191,18 @@ index a2e2590..1e17602 100644
 +        id: webMode
 +
 +        WebMode {
++            screenState: root.screenState
++            query: root.query
++            maxHeight: root.maxHeight
++            keyword: root.keyword
++            search: root.search
++        }
++    }
++
++    Component {
++        id: timerMode
++
++        TimerMode {
 +            screenState: root.screenState
 +            query: root.query
 +            maxHeight: root.maxHeight
@@ -1121,10 +1269,10 @@ index 8956b80..4eca00a 100644
          sourceComponent: Content {
              screenState: root.screenState
 diff --git a/modules/launcher/services/Actions.qml b/modules/launcher/services/Actions.qml
-index b1990cd..86d102c 100644
+index b1990cd..001bad5 100644
 --- a/modules/launcher/services/Actions.qml
 +++ b/modules/launcher/services/Actions.qml
-@@ -16,6 +16,34 @@ Searcher {
+@@ -16,6 +16,88 @@ Searcher {
          return search.slice(GlobalConfig.launcher.actionPrefix.length);
      }
  
@@ -1153,13 +1301,67 @@ index b1990cd..86d102c 100644
 +            icon: "content_paste",
 +            description: "Historique du presse-papiers",
 +            command: ["autocomplete", "clipboard"]
++        },
++        {
++            name: "Minuteur",
++            icon: "timer",
++            description: "Lancer un minuteur ou un pomodoro (>timer 10, >timer 1h30…)",
++            command: ["autocomplete", "timer"]
++        },
++        {
++            name: "Texte d'une zone",
++            icon: "text_fields",
++            description: "Reconnaître le texte d'une zone de l'écran et le copier",
++            command: ["caelestia", "shell", "capture", "ocr"]
++        },
++        {
++            name: "Lire un QR code",
++            icon: "qr_code_scanner",
++            description: "Lire le QR code d'une zone de l'écran et copier son contenu",
++            command: ["caelestia", "shell", "capture", "qr"]
++        },
++        {
++            name: "Créer un QR code",
++            icon: "qr_code_2",
++            description: "Transformer le texte copié en QR code (image copiée et enregistrée)",
++            command: ["caelestia", "shell", "capture", "qrMake"]
++        },
++        {
++            name: "Pipette",
++            icon: "colorize",
++            description: "Relever une couleur à l'écran et la copier",
++            command: ["caelestia", "shell", "capture", "colour"]
++        },
++        {
++            name: "GIF d'une zone",
++            icon: "gif_box",
++            description: "Enregistrer une zone de l'écran en GIF (relancer pour arrêter)",
++            command: ["caelestia", "shell", "capture", "gif"]
++        },
++        {
++            name: "Mises à jour",
++            icon: "system_update_alt",
++            description: "Voir les mises à jour du système",
++            command: ["caelestia", "shell", "updates", "open"]
++        },
++        {
++            name: "Réglages des ajouts",
++            icon: "widgets",
++            description: "Vue d'ensemble, minuteur, capture, widgets de bureau…",
++            command: ["caelestia", "shell", "extras", "open"]
++        },
++        {
++            name: "Déplacer les widgets",
++            icon: "open_with",
++            description: "Placer les widgets de bureau à la souris",
++            command: ["caelestia", "shell", "widgets", "edit"]
 +        }
 +    ]
 +
      list: variants.instances
      useFuzzy: GlobalConfig.launcher.useFuzzy.actions
  
-@@ -24,7 +52,7 @@ Searcher {
+@@ -24,7 +106,7 @@ Searcher {
  
          model: {
              const enableDangerous = GlobalConfig.launcher.enableDangerousActions;
@@ -1169,7 +1371,7 @@ index b1990cd..86d102c 100644
  
          Action {}
 diff --git a/modules/lock/LockSurface.qml b/modules/lock/LockSurface.qml
-index 782cb71..3c2f2cd 100644
+index 782cb71..f30663b 100644
 --- a/modules/lock/LockSurface.qml
 +++ b/modules/lock/LockSurface.qml
 @@ -189,7 +189,7 @@ WlSessionLockSurface {
@@ -1177,7 +1379,7 @@ index 782cb71..3c2f2cd 100644
  
          Visual {
 -            source: Wallpapers.current
-+            source: WallStudio.playableFor(WallStudio.wallFor(root.screen?.name ?? ""))
++            source: WallStudio.playableFor(WallStudio.shownOn(root.screen?.name ?? ""))
              playing: PersistentState.wallpaperPlaying
          }
      }
@@ -1215,10 +1417,18 @@ index bc94fc8..76b36fe 100644
                          layer.enabled: root.appIcon.endsWith("symbolic")
                      }
 diff --git a/modules/nexus/NexusState.qml b/modules/nexus/NexusState.qml
-index 8e8744b..9d61ad6 100644
+index 8e8744b..3e9edbc 100644
 --- a/modules/nexus/NexusState.qml
 +++ b/modules/nexus/NexusState.qml
-@@ -11,6 +11,8 @@ QtObject {
+@@ -1,6 +1,7 @@
+ import QtQuick
+ import Quickshell
+ import Quickshell.Bluetooth
++import qs.services
+ 
+ QtObject {
+     property ShellScreen screen
+@@ -11,6 +12,8 @@ QtObject {
      property bool searchOpen
  
      property string selectedWallpaperCategory
@@ -1227,8 +1437,20 @@ index 8e8744b..9d61ad6 100644
      property BluetoothDevice selectedBtDevice
      property DesktopEntry selectedApp
      property int editingVpnIndex: -1
+@@ -33,4 +36,11 @@ QtObject {
+     }
+ 
+     onCurrentPageIdxChanged: subPageIdxStack.length = 0
++
++    // Page demandée par un ajout (témoin des mises à jour…) avant d'ouvrir les réglages.
++    Component.onCompleted: {
++        const page = Extras.takeRequestedPage();
++        if (page >= 0)
++            currentPageIdx = page;
++    }
+ }
 diff --git a/modules/nexus/PageCompRegistry.qml b/modules/nexus/PageCompRegistry.qml
-index 1b725a3..42adf63 100644
+index 1b725a3..ed9e241 100644
 --- a/modules/nexus/PageCompRegistry.qml
 +++ b/modules/nexus/PageCompRegistry.qml
 @@ -11,6 +11,7 @@ import qs.modules.nexus.pages
@@ -1255,7 +1477,21 @@ index 1b725a3..42adf63 100644
                  }
              }
          },
-@@ -175,6 +176,17 @@ QtObject {
+@@ -95,7 +96,12 @@ QtObject {
+ 
+         // System
+         Component {
+-            PlaceholderComp {}
++            // Updates (page des ajouts, à la place de la page vide d'origine)
++            StackPage {
++                Component {
++                    UpdatesPage {}
++                }
++            }
+         },
+         Component {
+             PlaceholderComp {}
+@@ -175,6 +181,17 @@ QtObject {
                  }
              }
          },
@@ -1292,7 +1528,7 @@ index 90de4fb..9c3d59b 100644
          // About
          {
 diff --git a/modules/nexus/pages/WallpaperAndStyle.qml b/modules/nexus/pages/WallpaperAndStyle.qml
-index c3f3f5d..4d17261 100644
+index c3f3f5d..f4dfb16 100644
 --- a/modules/nexus/pages/WallpaperAndStyle.qml
 +++ b/modules/nexus/pages/WallpaperAndStyle.qml
 @@ -2,9 +2,11 @@ pragma ComponentBehavior: Bound
@@ -1307,14 +1543,18 @@ index c3f3f5d..4d17261 100644
  import qs.components
  import qs.components.controls
  import qs.components.widgets
-@@ -16,24 +18,187 @@ PageBase {
+@@ -16,24 +18,195 @@ PageBase {
  
      title: Tr.tr("Wallpaper & style")
  
 +    // Écran visé par le choix d'un fond dans cette fenêtre : tous (fond commun), ou un seul, qui
 +    // garde alors son propre fond. L'aperçu montre le fond de la cible.
 +    readonly property string target: nState.wallTarget
-+    readonly property ShellScreen targetScreen: Screens.screens.find(s => s.name === target) ?? nState.screen
++    readonly property var targets: WallStudio.targetsFor(nState.screen?.name ?? "")
++    readonly property ShellScreen targetScreen: {
++        const name = target.startsWith("ws:") ? WallStudio.screenOfWorkspace(target.slice(3)) : target;
++        return Screens.screens.find(s => s.name === name) ?? nState.screen;
++    }
 +
 +    readonly property list<MenuItem> qualityItems: [
 +        MenuItem {
@@ -1399,9 +1639,13 @@ index c3f3f5d..4d17261 100644
 +    component ScreenTile: Item {
 +        id: tile
 +
-+        required property string modelData // "" : tous les écrans
++        required property string modelData // "" : tous les écrans, un écran, ou "ws:" et un espace
 +        property bool selected
-+        readonly property bool own: !!WallStudio.screenWalls[modelData]
++        readonly property bool own: {
++            WallStudio.screenWalls; // dépendances
++            WallStudio.workspaceWalls;
++            return WallStudio.hasOwn(modelData);
++        }
 +
 +        signal picked
 +
@@ -1423,7 +1667,7 @@ index c3f3f5d..4d17261 100644
 +
 +                Image {
 +                    anchors.fill: parent
-+                    source: WallStudio.fileUrl(Wallpapers.stillFor(WallStudio.wallFor(tile.modelData)))
++                    source: WallStudio.fileUrl(Wallpapers.stillFor(WallStudio.wallOf(tile.modelData)))
 +                    sourceSize: Qt.size(288, 162)
 +                    asynchronous: true
 +                    fillMode: Image.PreserveAspectCrop
@@ -1450,7 +1694,7 @@ index c3f3f5d..4d17261 100644
 +            StyledText {
 +                Layout.fillWidth: true
 +                Layout.bottomMargin: Tokens.padding.small
-+                text: tile.modelData === "" || !tile.own ? "fond commun" : "fond propre"
++                text: tile.modelData === "" ? "fond commun" : tile.own ? "fond propre" : WallStudio.parentName(tile.modelData)
 +                color: Colours.palette.m3outline
 +                font: Tokens.font.label.small
 +                horizontalAlignment: Text.AlignHCenter
@@ -1494,30 +1738,31 @@ index c3f3f5d..4d17261 100644
                  const cWidth = root.cappedWidth;
 -                return Math.min(Math.round(cWidth * 0.4), cWidth / screen.width * screen.height);
 +                // Plus bas quand la rangée des écrans s'affiche dessous.
-+                return Math.min(Math.round(cWidth * (WallStudio.screenNames.length > 1 ? 0.32 : 0.4)), cWidth / screen.width * screen.height);
++                return Math.min(Math.round(cWidth * (root.targets.length > 1 ? 0.32 : 0.4)), cWidth / screen.width * screen.height);
              }
  
              color: Colours.tPalette.m3surfaceContainer
-@@ -71,6 +236,7 @@ PageBase {
+@@ -71,6 +244,8 @@ PageBase {
  
              WallpaperImpl {
                  anchors.fill: parent
-+                screenName: root.target
++                screenName: root.target.startsWith("ws:") ? "" : root.target
++                source: WallStudio.wallOf(root.target)
                  opacity: Config.background.wallpaperEnabled ? 1 : 0
  
                  Behavior on opacity {
-@@ -81,6 +247,42 @@ PageBase {
+@@ -81,6 +256,46 @@ PageBase {
              }
          }
  
-+        // Un fond par écran : tous les écrans détectés, plus « tous » pour le fond commun.
++        // Cibles : « tous » pour le fond commun, chaque écran détecté, et l'espace de travail affiché.
 +        RowLayout {
 +            Layout.alignment: Qt.AlignHCenter
-+            visible: WallStudio.screenNames.length > 1
++            visible: root.targets.length > 1
 +            spacing: Tokens.spacing.medium
 +
 +            Repeater {
-+                model: ["", ...WallStudio.screenNames]
++                model: root.targets
 +
 +                ScreenTile {
 +                    selected: root.target === modelData
@@ -1529,27 +1774,31 @@ index c3f3f5d..4d17261 100644
 +        StyledText {
 +            Layout.alignment: Qt.AlignHCenter
 +            Layout.topMargin: -parent.spacing / 2
-+            visible: WallStudio.screenNames.length > 1 && root.target !== ""
-+            text: `Le fond choisi ne s'applique qu'à ${root.target} ; les couleurs du thème restent celles du fond commun.`
++            visible: root.target !== ""
++            text: `Le fond choisi ne s'applique qu'${WallStudio.toTarget(root.target)} ; les couleurs du thème restent celles du fond commun.`
 +            color: Colours.palette.m3outline
 +            font: Tokens.font.label.small
 +        }
 +
 +        IconTextButton {
 +            Layout.alignment: Qt.AlignHCenter
-+            visible: root.target !== "" && !!WallStudio.screenWalls[root.target]
++            visible: {
++                WallStudio.screenWalls; // dépendances
++                WallStudio.workspaceWalls;
++                return root.target !== "" && WallStudio.hasOwn(root.target);
++            }
 +            icon: "link"
-+            text: `Reprendre le fond commun sur ${root.target}`
++            text: `Reprendre le ${WallStudio.parentName(root.target)} pour ${WallStudio.targetName(root.target)}`
 +            font: Tokens.font.body.small
 +            isRound: true
 +            type: IconTextButton.Text
-+            onClicked: WallStudio.setScreenWall(root.target, "")
++            onClicked: WallStudio.clearOwn(root.target)
 +        }
 +
          ButtonRow {
              Layout.alignment: Qt.AlignHCenter
              spacing: Tokens.spacing.small
-@@ -136,5 +338,55 @@ PageBase {
+@@ -136,5 +351,55 @@ PageBase {
              checked: !Colours.light
              onToggled: Colours.setMode(checked ? "dark" : "light")
          }
@@ -1748,7 +1997,7 @@ index f903dd6..8722ef1 100644
          expireTimeout = notification.expireTimeout;
          hints = notification.hints;
 diff --git a/services/Wallpapers.qml b/services/Wallpapers.qml
-index 9a8bdac..4764c81 100644
+index 9a8bdac..8bd2e33 100644
 --- a/services/Wallpapers.qml
 +++ b/services/Wallpapers.qml
 @@ -16,11 +16,29 @@ Searcher {
@@ -1759,7 +2008,7 @@ index 9a8bdac..4764c81 100644
 +    // Fond commun affiché : l'aperçu du studio quand il vise tous les écrans, sinon le fond appliqué.
 +    readonly property string current: showPreview && previewTarget === "" ? previewPath : actualCurrent
      property string previewPath
-+    // Écran visé par l'aperçu ("" : tous les écrans).
++    // Cible de l'aperçu : "" pour tous les écrans, un écran, ou "ws:" et un espace de travail.
 +    property string previewTarget
      property string actualCurrent
      property bool previewColourLock
@@ -1808,7 +2057,7 @@ index 9a8bdac..4764c81 100644
 -    function preview(path: string): void {
 +    // Aperçu sur le bureau du fond `path`, sur l'écran `target` ("" : tous les écrans).
 +    function preview(path: string, target = ""): void {
-+        if (target !== previewTarget || path !== (showPreview ? previewPath : WallStudio.wallFor(target)))
++        if (target !== previewTarget || path !== (showPreview ? previewPath : WallStudio.wallOf(target)))
 +            WallStudio.nextTransition();
          previewPath = path;
 +        previewTarget = target;
@@ -1842,7 +2091,7 @@ index 9a8bdac..4764c81 100644
      }
  
      function stopPreview(): void {
-+        if (showPreview && previewPath !== WallStudio.wallFor(previewTarget))
++        if (showPreview && previewPath !== WallStudio.wallOf(previewTarget))
 +            WallStudio.nextTransition();
          showPreview = false;
 -        if (previewColourLock)
@@ -1901,7 +2150,7 @@ index 9a8bdac..4764c81 100644
                  Colours.showPreview = true;
              }
 diff --git a/shell.qml b/shell.qml
-index 060fbef..460b674 100644
+index 060fbef..15f7e37 100644
 --- a/shell.qml
 +++ b/shell.qml
 @@ -2,8 +2,15 @@
@@ -1920,15 +2169,16 @@ index 060fbef..460b674 100644
  import QtQuick
  import Quickshell
  import Caelestia.Config
-@@ -12,6 +19,7 @@ import qs.modules.areapicker
+@@ -12,6 +19,8 @@ import qs.modules.areapicker
  import qs.modules.background
  import qs.modules.drawers
  import qs.modules.lock
++import qs.modules.extras
 +import qs.modules.extras.overview
  import qs.daemons
  
  ShellRoot {
-@@ -44,6 +52,7 @@ ShellRoot {
+@@ -44,9 +53,13 @@ ShellRoot {
      Background {}
      Drawers {}
      AreaPicker {}
@@ -1936,6 +2186,12 @@ index 060fbef..460b674 100644
      Lock {
          id: lock
      }
++    StartupLock {
++        lock: lock
++    }
+ 
+     // Daemons
+     Shortcuts {}
 diff --git a/utils/Icons.qml b/utils/Icons.qml
 index a86f662..48f026d 100644
 --- a/utils/Icons.qml

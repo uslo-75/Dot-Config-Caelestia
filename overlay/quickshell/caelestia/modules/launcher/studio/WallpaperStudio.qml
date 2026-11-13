@@ -24,11 +24,12 @@ Item {
     property string overlay: "" // "", "transitions", "theme"
     // Écran visé : "" pour tous, ou un écran qui garde alors son propre fond.
     property string target
-    readonly property string targetWall: WallStudio.wallFor(target)
+    readonly property string targetWall: WallStudio.wallOf(target)
     property string lastPath: targetWall
     property string lastQuery
     readonly property string screenName: screenState.modelData?.name ?? ""
-    readonly property bool multiScreen: WallStudio.screenNames.length > 1
+    // Plusieurs cibles possibles : d'autres écrans, ou au moins l'espace de travail affiché.
+    readonly property bool multiScreen: WallStudio.targetsFor(screenName).length > 1
     // Tant qu'on n'a pas navigué, le carrousel reste sur le fond de l'écran visé.
     property bool moved
 
@@ -43,6 +44,7 @@ Item {
     property real wheelAcc
     readonly property bool currentIsActual: {
         WallStudio.screenWalls; // dépendances de isWallOf
+        WallStudio.workspaceWalls;
         Wallpapers.actualCurrent;
         return currentPath !== "" && WallStudio.isWallOf(target, currentPath);
     }
@@ -132,7 +134,7 @@ Item {
         const searching = query !== "" && query !== lastQuery;
         let idx = searching ? 0 : values.findIndex(w => w.path === lastPath);
         if (idx < 0 && !query)
-            idx = values.findIndex(w => w.path === WallStudio.wallFor(target));
+            idx = values.findIndex(w => w.path === WallStudio.wallOf(target));
         if (searching)
             moved = true;
         lastQuery = query;
@@ -222,7 +224,7 @@ Item {
     // Place le carrousel sur le fond de l'écran visé.
     function showTargetWall(): void {
         // Lu directement : appelé au changement de cible, avant que `targetWall` ne soit recalculé.
-        lastPath = WallStudio.wallFor(target);
+        lastPath = WallStudio.wallOf(target);
         restoreIndex();
         moved = false;
     }
@@ -300,7 +302,7 @@ Item {
                 return true;
             case Qt.Key_E:
                 if (multiScreen)
-                    target = WallStudio.nextTarget(target, shift ? -1 : 1);
+                    target = WallStudio.nextTarget(target, shift ? -1 : 1, screenName);
                 return true;
             case Qt.Key_P:
                 PersistentState.wallpaperPlaying = !PersistentState.wallpaperPlaying;
@@ -455,7 +457,7 @@ Item {
             id: targetChip
 
             visible: root.multiScreen
-            icon: root.target === "" ? "select_all" : "desktop_windows"
+            icon: WallStudio.targetIcon(root.target)
             text: WallStudio.targetName(root.target)
             trailingIcon: "expand_more"
             checked: targetMenu.expanded || root.target !== ""
@@ -503,13 +505,18 @@ Item {
     Variants {
         id: targetItems
 
-        model: ["", ...WallStudio.screenNames]
+        model: WallStudio.targetsFor(root.screenName)
 
         MenuItem {
             required property string modelData
+            readonly property bool own: {
+                WallStudio.screenWalls; // dépendances
+                WallStudio.workspaceWalls;
+                return WallStudio.hasOwn(modelData);
+            }
 
-            text: modelData === "" ? "Tous les écrans" : WallStudio.screenWalls[modelData] ? `${modelData}  ·  fond propre` : modelData
-            icon: modelData === "" ? "select_all" : "desktop_windows"
+            text: own ? `${WallStudio.targetName(modelData)}  ·  fond propre` : WallStudio.targetName(modelData)
+            icon: WallStudio.targetIcon(modelData)
             value: modelData
             onClicked: root.target = modelData
         }
@@ -959,7 +966,7 @@ Item {
                         return "";
                     const parts = WallStudio.details(root.currentPath);
                     if (root.currentIsActual)
-                        parts.push(root.target ? `fond actuel de ${root.target}` : "fond actuel");
+                        parts.push(root.target ? `fond actuel ${WallStudio.ofTarget(root.target)}` : "fond actuel");
                     if (root.target)
                         parts.push("thème : couleurs du fond commun");
                     return parts.join("  ·  ");
@@ -978,12 +985,17 @@ Item {
             }
         }
 
-        // Écran visé avec son propre fond : retour au fond commun.
+        // Cible avec son propre fond : retour au fond commun (écran) ou à celui de l'écran
+        // (espace de travail).
         StudioChip {
-            visible: root.target !== "" && !!WallStudio.screenWalls[root.target]
+            visible: {
+                WallStudio.screenWalls; // dépendances
+                WallStudio.workspaceWalls;
+                return root.target !== "" && WallStudio.hasOwn(root.target);
+            }
             icon: "link"
-            text: "Reprendre le fond commun"
-            onClicked: WallStudio.setScreenWall(root.target, "")
+            text: `Reprendre le ${WallStudio.parentName(root.target)}`
+            onClicked: WallStudio.clearOwn(root.target)
         }
 
         StudioChip {
@@ -1005,7 +1017,7 @@ Item {
         IconTextButton {
             type: TextButton.Filled
             icon: root.currentIsActual ? "check_circle" : "wallpaper"
-            text: root.currentIsActual ? "Fond actuel" : root.target ? `Appliquer à ${root.target}` : WallStudio.hasOwnWalls ? "Appliquer partout" : "Appliquer"
+            text: root.currentIsActual ? "Fond actuel" : root.target ? `Appliquer ${WallStudio.toTarget(root.target)}` : WallStudio.hasOwnWalls ? "Appliquer partout" : "Appliquer"
             disabled: root.currentIsActual || !root.currentPath
             onClicked: root.applyCurrent(false)
         }
