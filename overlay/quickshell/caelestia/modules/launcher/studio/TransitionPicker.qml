@@ -17,7 +17,7 @@ Item {
     property string fromSource
     property string toSource
 
-    readonly property int columns: Math.max(3, Math.floor((width - Tokens.padding.large * 2 + Tokens.spacing.small) / 230))
+    readonly property int columns: Math.max(3, Math.floor((width - Tokens.padding.large * 2 + Tokens.spacing.small) / 270))
 
     signal closed
 

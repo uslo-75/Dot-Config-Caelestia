@@ -4,13 +4,12 @@ import QtQuick
 import Quickshell
 import Caelestia.Config
 import Caelestia.Models
-import Caelestia.Multimedia
 import Caelestia.State
 import qs.components
 import qs.components.effects
 import qs.services
 
-// Carte du carrousel : affiche, mini-clip vidéo au survol/sélection, badges.
+// Carte du carrousel : affiche, mini-clip au survol/sélection, badges.
 Item {
     id: root
 
@@ -21,6 +20,7 @@ Item {
 
     readonly property string path: modelData.path
     readonly property bool isCurrent: PathView.isCurrentItem
+    readonly property var meta: WallStudio.items[path] ?? null
     readonly property bool isVideo: WallStudio.isVideo(path)
     readonly property bool isActual: path === Wallpapers.actualCurrent
     readonly property bool isFavourite: WallStudio.favourites.includes(path)
@@ -29,16 +29,35 @@ Item {
         return WallStudio.hasTheme(path);
     }
     readonly property string poster: WallStudio.posterFor(path)
-    readonly property string clip: WallStudio.previewFor(path)
+    readonly property string strip: meta?.strip ?? ""
     readonly property real dim: PathView.itemDim ?? 0 // qmllint disable missing-property
 
-    // Le mini-clip attend que la sélection se pose (créer un lecteur à chaque cran saccade).
+    // Le mini-clip attend que la carte se pose au centre, ou un survol qui dure.
     property bool settled
+    property bool hoverSettled
+    readonly property bool hovered: stateLayer.containsMouse && !isCurrent
+    readonly property bool showClip: strip !== "" && PersistentState.wallpaperPlaying && ((isCurrent && settled) || (hovered && hoverSettled))
 
     signal activated
+    signal picked
 
     onIsCurrentChanged: {
         settled = false;
+        if (isCurrent)
+            settleTimer.restart();
+        else
+            settleTimer.stop();
+    }
+
+    onHoveredChanged: {
+        hoverSettled = false;
+        if (hovered)
+            hoverTimer.restart();
+        else
+            hoverTimer.stop();
+    }
+
+    Component.onCompleted: {
         if (isCurrent)
             settleTimer.restart();
     }
@@ -46,15 +65,15 @@ Item {
     Timer {
         id: settleTimer
 
-        interval: 380
+        interval: 260
         onTriggered: root.settled = root.isCurrent
     }
 
     Timer {
         id: hoverTimer
 
-        interval: 380
-        running: stateLayer.containsMouse && !root.isCurrent
+        interval: 320
+        onTriggered: root.hoverSettled = root.hovered
     }
 
     width: cardWidth
@@ -79,6 +98,9 @@ Item {
         opacity: 1 - root.dim * 0.6
     }
 
+    // Le contenu du ClipRect est rendu dans une texture : tant que rien n'y change, la carte
+    // n'est pas redessinée. Tout ce qui varie pendant le défilement (assombrissement, badges)
+    // reste donc en dehors.
     ClipRect {
         id: frame
 
@@ -111,14 +133,16 @@ Item {
             }
         }
 
-        // Mini-clip (270p, 6 s) : seulement pour la carte sélectionnée ou survolée.
+        // Mini-clip (planche d'images) : seulement pour la carte sélectionnée ou survolée.
         Loader {
             anchors.fill: parent
-            active: root.isVideo && root.clip !== "" && PersistentState.wallpaperPlaying && ((root.isCurrent && root.settled) || (stateLayer.containsMouse && !hoverTimer.running))
+            active: root.showClip
 
-            sourceComponent: Visual {
-                source: root.clip
-                playing: true
+            sourceComponent: ClipStrip {
+                source: root.strip
+                columns: root.meta?.stripCols ?? 10
+                frames: root.meta?.stripFrames ?? 1
+                fps: root.meta?.stripFps ?? 15
             }
         }
 
@@ -128,7 +152,8 @@ Item {
             anchors.right: parent.right
             anchors.bottom: parent.bottom
             height: parent.height * 0.4
-            opacity: root.isActual || root.hasTheme ? 0.75 : 0
+            visible: root.isActual || root.hasTheme
+            opacity: 0.75
             gradient: Gradient {
                 GradientStop {
                     position: 0
@@ -140,13 +165,15 @@ Item {
                 }
             }
         }
+    }
 
-        // Assombrit les cartes éloignées du centre.
-        Rectangle {
-            anchors.fill: parent
-            color: Colours.palette.m3scrim
-            opacity: root.dim * 0.5
-        }
+    // Assombrit les cartes éloignées du centre.
+    Rectangle {
+        anchors.fill: frame
+        radius: frame.radius
+        color: Colours.palette.m3scrim
+        opacity: root.dim * 0.5
+        visible: opacity > 0
     }
 
     Row {
@@ -159,7 +186,7 @@ Item {
         Badge {
             visible: root.isVideo
             icon: "play_arrow"
-            text: (WallStudio.items[root.path]?.height ?? 0) >= 2160 ? "4K" : ""
+            text: (root.meta?.height ?? 0) >= 2160 ? "4K" : ""
         }
     }
 
@@ -205,7 +232,7 @@ Item {
             if (root.isCurrent)
                 root.activated();
             else
-                root.PathView.view.currentIndex = root.index;
+                root.picked();
         }
     }
 

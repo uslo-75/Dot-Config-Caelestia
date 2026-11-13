@@ -19,7 +19,8 @@ Singleton {
     readonly property string indexPath: `${Quickshell.env("XDG_CACHE_HOME") || `${Paths.home}/.cache`}/caelestia/wallpaper-video/index.json`
     readonly property string statePath: `${Paths.state}/wallstudio.json`
 
-    // Index du cache : chemin -> { kind, width, height, fps, duration, size, playable, preview, poster }
+    // Index du cache : chemin -> { kind, width, height, fps, duration, size, playable, poster,
+    // strip, stripFrames, stripCols, stripFps }
     property var items: ({})
     property string videoQuality: "auto"
     property int targetHeight: 1080
@@ -156,10 +157,6 @@ Singleton {
         if (!isVideo(path))
             return path;
         return items[path]?.poster ?? "";
-    }
-
-    function previewFor(path: string): string {
-        return items[path]?.preview ?? "";
     }
 
     function displayName(path: string): string {
@@ -301,10 +298,16 @@ Singleton {
         Quickshell.execDetached(cmd);
     }
 
+    // Identifie un aperçu de couleurs : fond + thème mémorisé + réglage « intelligent ».
+    function previewKey(path: string): string {
+        const theme = themeFor(path);
+        return `${path}|${theme.mode}|${theme.variant}|${GlobalConfig.services.smartScheme ? 1 : 0}`;
+    }
+
     // Commande de prévisualisation des couleurs (respecte le thème mémorisé du fond).
     function previewCommand(path: string): var {
         const theme = themeFor(path);
-        const cmd = [applyTool, "--print", path, "--mode", theme.mode, "--variant", theme.variant];
+        const cmd = [applyTool, "--print", "--tag", previewKey(path), path, "--mode", theme.mode, "--variant", theme.variant];
         if (!GlobalConfig.services.smartScheme)
             cmd.push("--no-smart");
         return cmd;

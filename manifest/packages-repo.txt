@@ -12,6 +12,7 @@ patch
 procps-ng
 python
 python-gobject
+python-pillow
 qt6-multimedia-ffmpeg
 ripgrep
 rsync

@@ -7,11 +7,12 @@ Il installe les personnalisations utiles sans recopier la configuration matérie
 ## Studio de fonds d'écran (`Super+Alt+W`)
 
 - Images et vidéos lues nativement par Caelestia (branche `main`, paquet `caelestia-shell-git`), avec ses transitions shader : une transition fixe ou « Aléatoire » (16 effets doux tirés à chaque changement). Le sélecteur (`Ctrl+T`) montre chaque effet en miniature et l'anime au survol.
-- Carrousel 3D avec mini-clip sur la carte sélectionnée et aperçu en direct sur le bureau (fond, transition et couleurs) pendant la navigation.
+- Carrousel 3D à élan (une flèche maintenue fait défiler en continu), mini-clip sur la carte sélectionnée ou survolée et aperçu en direct sur le bureau (fond, transition et couleurs) pendant la navigation.
 - Filtres Tous / Images / Animés / Favoris (`Tab`), favoris (`Ctrl+D`), carte au hasard (`Ctrl+R`), lecture/pause (`Ctrl+P`), diaporama (5 min à 1 h), qualité vidéo.
 - Couleurs mémorisées par fond (`Ctrl+M`) : mode et variante, avec les pastilles réelles de chaque variante pour ce fond, appliqués en une seule passe (`caelestia-wallpaper-apply`).
-- `caelestia-wallpaper-cache` prépare en arrière-plan des copies à la hauteur de l'écran (4K → 1080p, environ 4× moins de CPU), des aperçus de 6 s et les métadonnées (`~/.cache/caelestia/wallpaper-video/index.json`).
+- `caelestia-wallpaper-cache` prépare en arrière-plan des copies à la hauteur de l'écran (4K → 1080p, 3 à 4× moins de CPU), des planches d'aperçu (6 s de vidéo dans une seule texture compressée, animée par un shader) et les métadonnées (`~/.cache/caelestia/wallpaper-video/index.json`).
 - La vidéo se met en pause, lecteur déchargé, quand une fenêtre plein écran ou le mode jeu couvre l'écran.
+- Fluidité : créer ou détruire un lecteur vidéo bloque l'interface (~80 ms avec le décodeur NVIDIA). Les mini-clips n'en utilisent donc aucun, les aperçus du bureau passent par une image fixe superposée au fond en cours, et le lecteur du fond ne change qu'une fois le studio refermé. Les animations du shell suivent la fréquence de chaque écran (`QSG_USE_SIMPLE_ANIMATION_DRIVER` dans `shell.qml`, à retirer pour revenir à l'horloge de Qt).
 
 ## Presse-papiers (`Super+V`)
 

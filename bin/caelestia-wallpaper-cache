@@ -3,7 +3,9 @@
 
 Pour chaque vidéo du dossier de fonds :
   - une affiche (1re image, à la hauteur de l'écran) ;
-  - un mini-clip d'aperçu (270p, 6 s) pour le survol dans le studio ;
+  - une planche d'aperçu (6 s en 90 vignettes dans une seule texture compressée BC1/KTX, lue
+    telle quelle par la carte graphique) que le studio anime avec un shader : pas de lecteur
+    vidéo à créer ni d'image à décoder pour un simple aperçu ;
   - une copie à la hauteur de l'écran quand la source est plus grande (4K -> 1080p),
     lue par le shell à la place de l'original (≈4x moins de CPU) ;
   - ses métadonnées (taille, i/s, durée).
@@ -21,9 +23,11 @@ Usage :
 import argparse
 import fcntl
 import hashlib
+import io
 import json
 import os
 import shutil
+import struct
 import subprocess
 import sys
 import time
@@ -44,9 +48,12 @@ LOG = STATE / "wallpaper-cache.log"
 
 VIDEO_EXT = {".mp4", ".webm", ".mkv", ".mov", ".avi", ".m4v"}
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".tif", ".tiff", ".avif", ".jxl"}
-PREVIEW_HEIGHT = 270
+PREVIEW_WIDTH = 480
+PREVIEW_HEIGHT = 272  # multiples de 4 : les vignettes tombent sur les blocs de la compression BC1
 PREVIEW_SECONDS = 6
-INDEX_VERSION = 2
+STRIP_FPS = 15
+STRIP_COLS = 10
+INDEX_VERSION = 3
 
 
 def log(message: str) -> None:
@@ -185,8 +192,14 @@ def copy_path(path: Path, target: int) -> Path:
     return CACHE / f"{target}p" / f"{key_for(path)}.mp4"
 
 
-def preview_path(path: Path) -> Path:
-    return CACHE / "preview" / f"{key_for(path)}.mp4"
+def strip_path(path: Path) -> Path:
+    return CACHE / "strip" / f"{key_for(path)}.ktx"
+
+
+def strip_frames(meta: dict) -> int:
+    """Nombre d'images de la planche : toute la boucle si elle est courte, sinon ses premières secondes."""
+    seconds = min(meta.get("duration") or PREVIEW_SECONDS, PREVIEW_SECONDS)
+    return max(1, min(PREVIEW_SECONDS * STRIP_FPS, round(seconds * STRIP_FPS)))
 
 
 def make_poster(src: Path, target: int) -> Path | None:
@@ -242,22 +255,77 @@ def make_copy(src: Path, target: int) -> Path | None:
     return None
 
 
-def make_preview(src: Path, decode_from: Path) -> Path | None:
-    out = preview_path(src)
+def capture(cmd: list[str], size: int, timeout: float) -> bytes | None:
+    """Sortie binaire d'une commande, seulement si elle a exactement la taille attendue."""
+    try:
+        res = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, timeout=timeout)
+    except (OSError, subprocess.SubprocessError) as exc:
+        log(f"échec {cmd[0]}: {exc}")
+        return None
+    if res.returncode != 0 or len(res.stdout) != size:
+        log(f"échec {' '.join(cmd[:3])}…: {res.stderr.decode(errors='replace').strip()[-400:]}")
+        return None
+    return res.stdout
+
+
+def write_ktx(out: Path, rgb: bytes, width: int, height: int) -> bool:
+    """Texture compressée BC1 dans un conteneur KTX 1.1, que Qt charge sans rien décoder."""
+    try:
+        from PIL import Image
+
+        dds = io.BytesIO()
+        Image.frombytes("RGB", (width, height), rgb).save(dds, format="DDS", pixel_format="DXT1")
+    except Exception as exc:  # Pillow absent ou sans encodeur DXT1 : pas d'aperçu animé
+        log(f"planche impossible ({type(exc).__name__}: {exc})")
+        return False
+    blocks = dds.getvalue()[128:]  # après l'en-tête DDS
+    if len(blocks) != (width // 4) * (height // 4) * 8:
+        log("planche impossible (taille DXT1 inattendue)")
+        return False
+    header = bytes([0xAB, 0x4B, 0x54, 0x58, 0x20, 0x31, 0x31, 0xBB, 0x0D, 0x0A, 0x1A, 0x0A]) + struct.pack(
+        "<13I",
+        0x04030201,  # boutisme
+        0,  # glType (compressé)
+        1,  # glTypeSize
+        0,  # glFormat (compressé)
+        0x83F0,  # GL_COMPRESSED_RGB_S3TC_DXT1_EXT
+        0x1907,  # GL_RGB
+        width,
+        height,
+        0,  # profondeur
+        0,  # éléments de tableau
+        1,  # faces
+        1,  # niveaux de mipmap
+        0,  # métadonnées
+    )
+    tmp = out.with_name(out.stem + ".tmp.ktx")
+    tmp.write_bytes(header + struct.pack("<I", len(blocks)) + blocks)
+    tmp.replace(out)
+    return True
+
+
+def make_strip(src: Path, decode_from: Path, frames: int) -> Path | None:
+    out = strip_path(src)
     if fresh(out, src):
         return out
     out.parent.mkdir(parents=True, exist_ok=True)
-    tmp = out.with_name(out.stem + ".tmp.mp4")
-    vf = f"scale=-2:{PREVIEW_HEIGHT}:flags=bicubic,fps=30,format=yuv420p"
-    base = ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-t", str(PREVIEW_SECONDS),
-            "-i", str(decode_from), "-vf", vf, "-an", "-movflags", "+faststart"]
-    ok = run(base + ["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "30", "-b:v", "0", str(tmp)],
-             timeout=120) or run(base + ["-c:v", "libx264", "-preset", "veryfast", "-crf", "30", str(tmp)], timeout=180)
-    if ok and tmp.exists() and tmp.stat().st_size > 0:
-        tmp.replace(out)
-        return out
-    tmp.unlink(missing_ok=True)
-    return None
+    rows = -(-frames // STRIP_COLS)
+    width, height = STRIP_COLS * PREVIEW_WIDTH, rows * PREVIEW_HEIGHT
+    vf = (
+        f"fps={STRIP_FPS},trim=end_frame={frames},"
+        f"scale={PREVIEW_WIDTH}:{PREVIEW_HEIGHT}:force_original_aspect_ratio=increase:flags=bicubic,"
+        f"crop={PREVIEW_WIDTH}:{PREVIEW_HEIGHT},tile={STRIP_COLS}x{rows}"
+    )
+    seconds = f"{frames / STRIP_FPS + 1:.2f}"
+    tail = ["-vf", vf, "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
+    head = ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error"]
+    # La source est relue en boucle : la planche est toujours pleine, même si la durée est mal connue.
+    rgb = capture(head + ["-stream_loop", "-1", "-t", seconds, "-i", str(decode_from)] + tail, width * height * 3, 180)
+    if rgb is None:
+        rgb = capture(head + ["-t", seconds, "-i", str(decode_from)] + tail, width * height * 3, 180)
+    if rgb is None or not write_ktx(out, rgb, width, height):
+        return None
+    return out
 
 
 def entry_for(path: Path, target: int, mode: str) -> dict:
@@ -274,9 +342,12 @@ def entry_for(path: Path, target: int, mode: str) -> dict:
         poster = poster_path(path, target)
         if poster.exists():
             entry["poster"] = str(poster)
-        preview = preview_path(path)
-        if fresh(preview, path):
-            entry["preview"] = str(preview)
+        strip = strip_path(path)
+        if fresh(strip, path):
+            entry["strip"] = str(strip)
+            entry["stripFrames"] = strip_frames(meta)
+            entry["stripCols"] = STRIP_COLS
+            entry["stripFps"] = STRIP_FPS
         copy = copy_path(path, target)
         entry["playable"] = str(copy) if mode == "auto" and fresh(copy, path) else str(path)
         entry["optimised"] = entry["playable"] != str(path)
@@ -313,14 +384,17 @@ def prune(videos: list[Path], target: int) -> None:
         if child.is_dir() and name.endswith("p") and name[:-1].isdigit() and name != f"{target}p":
             shutil.rmtree(child, ignore_errors=True)
             continue
-        if not child.is_dir() or name not in {f"{target}p", "covers", "preview", "meta"}:
+        if child.is_dir() and name == "preview":
+            shutil.rmtree(child, ignore_errors=True)  # mini-clips mp4 d'avant les planches
+            continue
+        if not child.is_dir() or name not in {f"{target}p", "covers", "strip", "meta"}:
             continue
         for f in child.rglob("*"):
             if not f.is_file():
                 continue
             stem = f.name.split(".", 1)[0]
             wanted = keep_meta if name == "meta" else keep
-            if stem not in wanted or ".tmp." in f.name:
+            if stem not in wanted or ".tmp." in f.name or (name == "strip" and f.suffix != ".ktx"):
                 f.unlink(missing_ok=True)
         if name == "covers":
             for d in child.iterdir():
@@ -358,10 +432,13 @@ def build(files: list[str]) -> int:
             make_poster(path, target)
         write_index(walls, target)
 
-        # 2. Aperçus de survol, puis copies écran (le plus long), en publiant l'index au fil de l'eau.
+        # 2. Planches d'aperçu, puis copies écran (le plus long), en publiant l'index au fil de l'eau.
         for path in videos:
+            if fresh(strip_path(path), path):
+                continue
             copy = copy_path(path, target)
-            make_preview(path, copy if fresh(copy, path) else path)
+            if make_strip(path, copy if fresh(copy, path) else path, strip_frames(probe(path))):
+                write_index(walls, target)
         write_index(walls, target)
 
         if quality() == "auto":
@@ -429,7 +506,7 @@ def main() -> int:
         items = data.get("items", {})
         videos = [e for e in items.values() if e.get("kind") == "video"]
         print(f"fonds : {len(items)} (dont {len(videos)} vidéos), cible {data.get('target')}p, qualité {data.get('quality')}")
-        print(f"copies écran : {sum(1 for e in videos if e.get('optimised'))}, aperçus : {sum(1 for e in videos if 'preview' in e)}")
+        print(f"copies écran : {sum(1 for e in videos if e.get('optimised'))}, aperçus : {sum(1 for e in videos if 'strip' in e)}")
         return 0
     return 1
 

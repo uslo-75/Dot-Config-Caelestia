@@ -1,8 +1,32 @@
+diff --git a/components/widgets/CoverArt.qml b/components/widgets/CoverArt.qml
+index 1c7fbdb..b1f14ba 100644
+--- a/components/widgets/CoverArt.qml
++++ b/components/widgets/CoverArt.qml
+@@ -47,7 +47,9 @@ Item {
+ 
+             Anim on rotation {
+                 running: true
+-                paused: !Players.active?.isPlaying
++                // En pause aussi quand la pochette est cachée (tableau de bord gardé en mémoire) :
++                // une animation sans fin fait redessiner toutes les fenêtres du shell.
++                paused: !Players.active?.isPlaying || !root.visible
+                 from: 360
+                 to: 0
+                 duration: 23500
 diff --git a/components/widgets/WallpaperImpl.qml b/components/widgets/WallpaperImpl.qml
-index 6229874..4b5b39f 100644
+index 6229874..3848133 100644
 --- a/components/widgets/WallpaperImpl.qml
 +++ b/components/widgets/WallpaperImpl.qml
-@@ -9,7 +9,12 @@ import qs.services
+@@ -6,10 +6,21 @@ import Caelestia.Shaders
+ import Caelestia.State
+ import qs.services
+ 
++// Fond d'écran d'un écran : `live` lit le fond appliqué, `still` affiche une image fixe par-dessus
++// (aperçu du studio, ou affiche du fond qu'on vient d'appliquer en attendant son lecteur).
++//
++// Créer ou détruire un lecteur vidéo bloque l'interface ~80 ms à chaque fois (décodeur NVIDIA) :
++// `live` ne suit donc jamais les aperçus, et son fichier ne change que caché derrière `still`,
++// une fois les animations terminées.
  Item {
      id: root
  
@@ -15,54 +39,156 @@ index 6229874..4b5b39f 100644
          CUtils.dependency(Config.background.wallpaperTransition);
          let transition = CUtils.enumToString(Config.background, "wallpaperTransition");
          if (!transition)
-@@ -18,12 +23,37 @@ Item {
+@@ -18,34 +29,160 @@ Item {
          transition = transition[0].toLowerCase() + transition.slice(1);
          return Shaders[transition] ?? Shaders.crossfade;
      }
+-
+-    property string source: Wallpapers.current
 +    // Figée au début de chaque transition : en changer pendant qu'elle joue ne fait pas de saut.
 +    property transitionShader runningShader: Shaders.crossfade
- 
-     property string source: Wallpapers.current
-+    // Fichier réellement lu : copie à la taille de l'écran pour les vidéos plus grandes que lui.
-+    // Pendant la navigation dans le studio, l'affiche suffit : créer un lecteur vidéo à chaque
-+    // cran bloquerait l'interface. La vidéo démarre une fois le fond appliqué.
-+    readonly property bool stillOnly: Wallpapers.showPreview && WallStudio.isVideo(source) && WallStudio.posterFor(source) !== ""
-+    readonly property string playable: stillOnly ? WallStudio.posterFor(source) : WallStudio.playableFor(source)
-+    property string lastSource
-+    // Pause automatique (plein écran, jeu) en plus de la pause manuelle.
++
++    // Fichier lu pour le fond appliqué (copie à la taille de l'écran pour les grandes vidéos).
++    readonly property string playable: WallStudio.playableFor(Wallpapers.actualCurrent)
++    // Image fixe du fond appliqué (l'affiche pour une vidéo), "" si elle n'existe pas encore.
++    readonly property string actualStill: WallStudio.posterFor(Wallpapers.actualCurrent)
++    // Image fixe de l'aperçu du studio, "" hors aperçu.
++    readonly property string previewStill: Wallpapers.showPreview && Wallpapers.previewPath !== Wallpapers.actualCurrent ? WallStudio.posterFor(Wallpapers.previewPath) : ""
++    // Image fixe à afficher ("" = afficher `live`) : l'aperçu, sinon l'affiche du fond appliqué
++    // tant que `live` lit encore l'ancien.
++    readonly property string stillTarget: previewStill !== "" ? previewStill : live.source === playable ? "" : actualStill
++
++    // Pause automatique (plein écran, jeu) demandée par Wallpaper.qml, appliquée avec un délai :
++    // elle décharge le lecteur, autant le faire après l'animation de passage en plein écran.
 +    property bool autoPaused
++    property bool paused
++
++    // Ce qui est affiché une fois la transition terminée.
++    property Item shown: live
      property ShaderEffectSource currentCapture: capture1
      property real transitionProgress: 1
- 
--    onSourceChanged: {
-+    function beginTransition(capture: ShaderEffectSource): void {
-+        capture.visible = false;
-+        transition.from = capture;
-+        // Même fond (affiche -> vidéo) : simple fondu rapide, l'image est identique.
-+        runningShader = upgrade ? Shaders.crossfade : shader;
-+        transitionProgress = 0;
-+        live.source = playable;
-+        if (live.ready)
-+            transitionAnim.start();
++    property bool capturing
++    property bool completed
++    // Moment du dernier changement de fond appliqué.
++    property real appliedAt
++
++    // Vrai quand changer de lecteur ne gênera plus aucune animation : le studio est refermé et
++    // le fondu des couleurs du nouveau thème est terminé.
++    function quiet(): bool {
++        const now = Date.now();
++        if (now - appliedAt < 700)
++            return false;
++        if (Colours.scheme !== "dynamic")
++            return true;
++        if (Colours.schemeLoadedAt >= appliedAt)
++            return now - Colours.schemeLoadedAt >= 350;
++        return now - appliedAt >= 1500; // Thème pas (encore) régénéré.
 +    }
 +
-+    property bool upgrade
++    // Regroupe les changements d'un même instant (fond appliqué + fin d'aperçu, par exemple).
++    function retarget(): void {
++        if (!completed)
++            return;
++        const target = stillTarget;
++        if (target !== "") {
++            if (shown !== still || still.path !== target)
++                capture();
++        } else if (shown !== live || live.source !== playable) {
++            capture();
++        }
+ 
+-    onSourceChanged: {
++        if (previewStill === "" && target !== "")
++            switchTimer.restart();
++    }
 +
-+    onPlayableChanged: {
-+        upgrade = source === lastSource;
-+        lastSource = source;
++    // Fige ce qui est à l'écran ; la transition part de cette capture.
++    function capture(): void {
          transitionAnim.stop();
++        if (capturing)
++            return; // La capture en cours servira : beginTransition lit l'état du moment.
++        capturing = true;
  
          if (transitionProgress < 1) {
-@@ -37,14 +67,18 @@ Item {
+             currentCapture = currentCapture === capture1 ? capture2 : capture1;
+             currentCapture.sourceItem = transition;
+         } else {
+-            currentCapture.sourceItem = live;
++            currentCapture.sourceItem = shown;
+         }
+ 
+         currentCapture.visible = true;
          currentCapture.scheduleUpdate();
      }
  
 -    Component.onCompleted: live.source = source
++    function beginTransition(captured: ShaderEffectSource): void {
++        capturing = false;
++        captured.visible = false;
++        transition.from = captured;
++
++        const target = stillTarget;
++        let next = live;
++        if (target !== "") {
++            runningShader = shader;
++            still.path = target;
++            next = still;
++        } else {
++            // Même image que celle affichée (affiche → vidéo du même fond) : simple fondu.
++            runningShader = shown === still && still.path === actualStill ? Shaders.crossfade : shader;
++            if (live.source !== playable)
++                live.source = playable; // Fond sans image fixe : le lecteur change avant la transition.
++        }
++
++        shown = next;
++        transition.to = next;
++        transitionProgress = 0;
++        if (next.ready)
++            transitionAnim.start();
++    }
++
++    function startWhenReady(item: Item): void {
++        if (item.ready && shown === item && transitionProgress < 1 && !capturing && !transitionAnim.running)
++            transitionAnim.start();
++    }
++
++    onStillTargetChanged: Qt.callLater(retarget)
++    onPlayableChanged: {
++        appliedAt = Date.now();
++        Qt.callLater(retarget);
++    }
++    onAutoPausedChanged: pauseTimer.restart()
++
 +    Component.onCompleted: {
-+        lastSource = source;
++        paused = autoPaused;
 +        runningShader = shader;
 +        live.source = playable;
++        completed = true;
++    }
++
++    // Change le fichier de `live` caché derrière l'image fixe du même fond, quand plus rien ne
++    // bouge (transition finie, studio refermé, couleurs du nouveau thème posées), puis fond vers
++    // lui dès qu'il est prêt.
++    Timer {
++        id: switchTimer
++
++        interval: 150
++        onTriggered: {
++            if (root.previewStill !== "" || root.stillTarget === "")
++                return;
++            if (root.shown !== still || still.path !== root.actualStill || root.transitionProgress < 1 || root.capturing || !root.quiet()) {
++                restart();
++                return;
++            }
++            live.source = root.playable;
++        }
++    }
++
++    Timer {
++        id: pauseTimer
++
++        interval: root.autoPaused ? 1000 : 400
++        onTriggered: root.paused = root.autoPaused
 +    }
  
      NumberAnimation on transitionProgress {
@@ -74,9 +200,14 @@ index 6229874..4b5b39f 100644
 +        duration: root.runningShader.duration * Tokens.anim.durations.scale
 +        easing: root.runningShader.easing
          to: 1
++        onFinished: {
++            if (root.shown === live)
++                still.path = ""; // Libère l'image fixe.
++        }
      }
  
-@@ -55,14 +89,7 @@ Item {
+     ShaderEffectSource {
+@@ -55,14 +192,7 @@ Item {
          live: false
          visible: false
  
@@ -92,7 +223,7 @@ index 6229874..4b5b39f 100644
      }
  
      ShaderEffectSource {
-@@ -72,26 +99,19 @@ Item {
+@@ -72,28 +202,33 @@ Item {
          live: false
          visible: false
  
@@ -112,17 +243,34 @@ index 6229874..4b5b39f 100644
  
          anchors.fill: parent
 -        playing: PersistentState.wallpaperPlaying
-+        playing: PersistentState.wallpaperPlaying && !root.autoPaused
++        visible: root.shown === live || root.transitionProgress < 1
++        playing: PersistentState.wallpaperPlaying && !root.paused
          animate: false
          layer.enabled: true
  
-         onReadyChanged: {
+-        onReadyChanged: {
 -            if (ready && source === root.source)
-+            if (ready && source === root.playable)
-                 transitionAnim.start();
-         }
+-                transitionAnim.start();
+-        }
++        onReadyChanged: root.startWhenReady(this)
++    }
++
++    Visual {
++        id: still
++
++        property string path
++
++        anchors.fill: parent
++        visible: root.shown === still || root.transitionProgress < 1
++        source: path
++        animate: false
++        layer.enabled: true
++
++        onReadyChanged: root.startWhenReady(this)
      }
-@@ -105,6 +125,6 @@ Item {
+ 
+     ShaderEffect {
+@@ -105,6 +240,6 @@ Item {
  
          anchors.fill: parent
          visible: root.transitionProgress < 1
@@ -131,7 +279,7 @@ index 6229874..4b5b39f 100644
      }
  }
 diff --git a/daemons/Shortcuts.qml b/daemons/Shortcuts.qml
-index adc4e4c..de99022 100644
+index adc4e4c..54e560e 100644
 --- a/daemons/Shortcuts.qml
 +++ b/daemons/Shortcuts.qml
 @@ -11,7 +11,28 @@ Scope {
@@ -146,11 +294,11 @@ index adc4e4c..de99022 100644
 +        const screenState = ShellState.forActive();
 +        if (!screenState || root.hasFullscreen)
 +            return;
-+        if (screenState.launcher && LauncherState.mode === mode) {
++        if (screenState.launcher && LauncherState.modeFor(screenState) === mode) {
 +            screenState.launcher = false;
 +            return;
 +        }
-+        LauncherState.open(mode);
++        LauncherState.open(mode, screenState);
 +        screenState.launcher = true;
 +    }
 +
@@ -158,7 +306,7 @@ index adc4e4c..de99022 100644
 +        const screenState = ShellState.forActive();
 +        if (!screenState || root.hasFullscreen)
 +            return;
-+        LauncherState.open(mode);
++        LauncherState.open(mode, screenState);
 +        screenState.launcher = true;
 +    }
  
@@ -197,7 +345,7 @@ index adc4e4c..de99022 100644
 +            if (!screenState || (root.hasFullscreen && !screenState.launcher))
 +                return;
 +            if (!screenState.launcher)
-+                LauncherState.open("");
++                LauncherState.open("", screenState);
 +            screenState.launcher = !screenState.launcher;
 +        }
 +
@@ -444,10 +592,37 @@ index 73bc2b1..2c76c6d 100644
  
          const thresholds = [];
 diff --git a/modules/launcher/Content.qml b/modules/launcher/Content.qml
-index f5058f0..f6e3346 100644
+index f5058f0..23c5b90 100644
 --- a/modules/launcher/Content.qml
 +++ b/modules/launcher/Content.qml
-@@ -59,17 +59,26 @@ Item {
+@@ -19,6 +19,26 @@ Item {
+     readonly property int padding: Tokens.padding.large
+     readonly property int rounding: Tokens.rounding.extraLarge
+ 
++    // Numéro de la dernière demande de mode au moment de la fermeture (-1 : rien à remettre à zéro).
++    property int closedAtRequest: -1
++
++    // Remet le launcher en mode applications. Fait une fois le panneau refermé (ou s'il est
++    // rouvert sans demande de mode) : pendant l'animation de fermeture le contenu reste en place,
++    // au lieu de basculer vers les applications à mi-course.
++    function resetMode(): void {
++        if (closedAtRequest === -1)
++            return;
++        if (closedAtRequest === LauncherState.requestSerial && LauncherState.concerns(screenState))
++            LauncherState.clear();
++        closedAtRequest = -1;
++        search.text = "";
++    }
++
++    onVisibleChanged: {
++        if (!visible && !screenState.launcher)
++            resetMode();
++    }
++
+     implicitWidth: listWrapper.width + padding * 2
+     implicitHeight: search.height + listWrapper.height + padding + search.anchors.bottomMargin
+ 
+@@ -59,17 +79,26 @@ Item {
          topPadding: Math.round((Tokens.padding.medium + Tokens.padding.large) / 2)
          bottomPadding: Math.round((Tokens.padding.medium + Tokens.padding.large) / 2)
  
@@ -481,7 +656,7 @@ index f5058f0..f6e3346 100644
                      if (text.startsWith(`${GlobalConfig.launcher.actionPrefix}calc `))
                          currentItem.onClicked();
                      else
-@@ -81,12 +90,28 @@ Item {
+@@ -81,12 +110,28 @@ Item {
              }
          }
  
@@ -513,21 +688,22 @@ index f5058f0..f6e3346 100644
              if (!GlobalConfig.launcher.vimKeybinds)
                  return;
  
-@@ -111,8 +136,12 @@ Item {
+@@ -111,8 +156,12 @@ Item {
  
          Connections {
              function onLauncherChanged(): void {
 -                if (!root.screenState.launcher)
+-                    search.text = "";
 +                if (!root.screenState.launcher) {
-                     search.text = "";
-+                    LauncherState.clear();
++                    root.closedAtRequest = LauncherState.requestSerial;
 +                } else {
++                    root.resetMode();
 +                    search.forceActiveFocus();
 +                }
              }
  
              function onSessionChanged(): void {
-@@ -122,5 +151,15 @@ Item {
+@@ -122,5 +171,17 @@ Item {
  
              target: root.screenState
          }
@@ -535,6 +711,8 @@ index f5058f0..f6e3346 100644
 +        // Ouverture dans un mode par raccourci : on repart d'une recherche vide.
 +        Connections {
 +            function onRequestSerialChanged(): void {
++                if (!LauncherState.concerns(root.screenState))
++                    return;
 +                search.text = "";
 +                search.forceActiveFocus();
 +            }
@@ -544,7 +722,7 @@ index f5058f0..f6e3346 100644
      }
  }
 diff --git a/modules/launcher/ContentList.qml b/modules/launcher/ContentList.qml
-index a2e2590..4d33eb3 100644
+index a2e2590..1e3eb3b 100644
 --- a/modules/launcher/ContentList.qml
 +++ b/modules/launcher/ContentList.qml
 @@ -7,6 +7,8 @@ import qs.components
@@ -573,7 +751,7 @@ index a2e2590..4d33eb3 100644
 +            return "clipboard";
 +        return "";
 +    }
-+    readonly property string mode: LauncherState.mode || prefixMode
++    readonly property string mode: LauncherState.modeFor(screenState) || prefixMode
 +    readonly property string query: prefixMode ? search.text.slice(search.text.indexOf(" ") + 1) : (mode ? search.text : "")
 +    readonly property bool showWallpapers: mode === "wallpapers"
 +    readonly property bool showClipboard: mode === "clipboard"
@@ -583,7 +761,7 @@ index a2e2590..4d33eb3 100644
  
      anchors.horizontalCenter: parent.horizontalCenter
      anchors.bottom: parent.bottom
-@@ -48,10 +64,19 @@ Item {
+@@ -48,14 +64,27 @@ Item {
              name: "wallpapers"
  
              PropertyChanges {
@@ -605,17 +783,24 @@ index a2e2590..4d33eb3 100644
          }
      ]
  
-@@ -96,25 +121,40 @@ Item {
-         asynchronous: true
-         active: false
+     Behavior on animState {
++        // Fondu seulement quand on change de mode launcher ouvert. À l'ouverture par raccourci
++        // (mode choisi juste avant) et une fois refermé, la bascule est immédiate.
++        enabled: root.screenState.launcher
++
+         SequentialAnimation {
+             Anim {
+                 target: root
+@@ -93,28 +122,44 @@ Item {
+     Loader {
+         id: wallpaperList
  
--        anchors.top: parent.top
--        anchors.bottom: parent.bottom
--        anchors.horizontalCenter: parent.horizontalCenter
++        // Chargé d'un bloc : le panneau a sa taille finale dès la première image de l'animation
++        // d'ouverture, au lieu de s'agrandir une fois le studio prêt.
++        active: false
++
 +        anchors.fill: parent
- 
--        sourceComponent: WallpaperList {
--            objectName: "launcherWallpaperList"
++
 +        sourceComponent: WallpaperStudio {
 +            objectName: "launcherWallpaperStudio"
 +
@@ -628,11 +813,16 @@ index a2e2590..4d33eb3 100644
 +    Loader {
 +        id: clipboardList
 +
-+        asynchronous: true
-+        active: false
-+
+         asynchronous: true
+         active: false
+ 
+-        anchors.top: parent.top
+-        anchors.bottom: parent.bottom
+-        anchors.horizontalCenter: parent.horizontalCenter
 +        anchors.fill: parent
-+
+ 
+-        sourceComponent: WallpaperList {
+-            objectName: "launcherWallpaperList"
 +        sourceComponent: ClipboardView {
 +            objectName: "launcherClipboard"
  
@@ -716,10 +906,21 @@ index 782cb71..7c1a6ce 100644
          }
      }
 diff --git a/services/Colours.qml b/services/Colours.qml
-index 0b64400..85f52d4 100644
+index 0b64400..6b1e4a0 100644
 --- a/services/Colours.qml
 +++ b/services/Colours.qml
-@@ -61,7 +61,14 @@ Singleton {
+@@ -25,6 +25,10 @@ Singleton {
+     readonly property Transparency transparency: Transparency {}
+     readonly property alias wallLuminance: analyser.luminance
+ 
++    // Moment où le thème appliqué a été (re)chargé : laisse finir le fondu des couleurs avant
++    // les opérations qui bloquent l'interface (changement de lecteur vidéo du fond).
++    property real schemeLoadedAt
++
+     property bool cooldownPending
+     property real lastBaseTransparency
+ 
+@@ -61,12 +65,21 @@ Singleton {
  
      function load(data: string, isPreview: bool): void {
          const colours = isPreview ? preview : current;
@@ -735,7 +936,14 @@ index 0b64400..85f52d4 100644
  
          if (!isPreview) {
              root.scheme = scheme.name;
-@@ -123,7 +130,7 @@ Singleton {
+             flavour = scheme.flavour;
+             currentLight = scheme.mode === "light";
++            schemeLoadedAt = Date.now();
++            Wallpapers.clearPreviewCache(); // Les aperçus dépendent du thème appliqué.
+         } else {
+             previewLight = scheme.mode === "light";
+         }
+@@ -123,7 +136,7 @@ Singleton {
      ImageAnalyser {
          id: analyser
  
@@ -745,14 +953,17 @@ index 0b64400..85f52d4 100644
  
      Timer {
 diff --git a/services/Wallpapers.qml b/services/Wallpapers.qml
-index 9a8bdac..919157f 100644
+index 9a8bdac..87a910f 100644
 --- a/services/Wallpapers.qml
 +++ b/services/Wallpapers.qml
-@@ -21,6 +21,18 @@ Searcher {
+@@ -21,6 +21,21 @@ Searcher {
      property string actualCurrent
      property bool previewColourLock
      property bool pendingPreviewClear
 +    property int previewRequestId
++    // Couleurs d'aperçu déjà calculées (jusqu'au prochain changement de thème) : revenir sur
++    // un fond recolore l'interface tout de suite, sans relancer le calcul.
++    property var previewColours: ({})
 +
 +    function isVideo(path: string): bool {
 +        return WallStudio.isVideo(path);
@@ -767,7 +978,7 @@ index 9a8bdac..919157f 100644
  
      function getCategoryFor(w: FileSystemEntry): string {
          let category = w.parentDir.slice(Paths.wallsdir.length + 1);
-@@ -30,24 +42,33 @@ Searcher {
+@@ -30,24 +45,44 @@ Searcher {
      }
  
      function setRandom(): void {
@@ -791,11 +1002,22 @@ index 9a8bdac..919157f 100644
 -        if (Colours.scheme === "dynamic")
 -            getPreviewColoursProc.running = true;
 +        if (Colours.scheme === "dynamic" && path) {
-+            // Relance pour le nouveau fond ; un résultat arrivé trop tard est ignoré.
-+            getPreviewColoursProc.requestId = ++previewRequestId;
++            const key = WallStudio.previewKey(path);
++            ++previewRequestId; // Un résultat arrivé trop tard pour un autre fond est ignoré.
++            if (previewColours[key]) {
++                Colours.load(previewColours[key], true);
++                Colours.showPreview = true;
++                return;
++            }
++            getPreviewColoursProc.requestId = previewRequestId;
 +            getPreviewColoursProc.requestPath = path;
++            getPreviewColoursProc.requestKey = key;
 +            getPreviewColoursProc.exec(WallStudio.previewCommand(path));
 +        }
++    }
++
++    function clearPreviewCache(): void {
++        previewColours = ({});
      }
  
      function stopPreview(): void {
@@ -806,7 +1028,7 @@ index 9a8bdac..919157f 100644
          if (previewColourLock)
              pendingPreviewClear = true;
          else
-@@ -55,8 +76,10 @@ Searcher {
+@@ -55,8 +90,10 @@ Searcher {
      }
  
      onPreviewColourLockChanged: {
@@ -818,18 +1040,51 @@ index 9a8bdac..919157f 100644
      }
  
      list: wallpapers.entries
-@@ -114,9 +137,13 @@ Searcher {
+@@ -114,9 +151,26 @@ Searcher {
      Process {
          id: getPreviewColoursProc
  
 -        command: ["caelestia", "wallpaper", "-p", root.previewPath, ...root.smartArg]
 +        property int requestId
 +        property string requestPath
++        property string requestKey
 +
          stdout: StdioCollector {
              onStreamFinished: {
-+                if (getPreviewColoursProc.requestId !== root.previewRequestId || getPreviewColoursProc.requestPath !== root.previewPath || !root.showPreview || !text.trim())
++                // Seule une sortie complète (JSON valide) et étiquetée est mémorisée : relancer le
++                // calcul pour un autre fond interrompt le précédent.
++                let tag = "";
++                try {
++                    tag = JSON.parse(text)?.tag ?? "";
++                } catch (e) {
++                    return;
++                }
++                if (tag)
++                    root.previewColours[tag] = text;
++                if (getPreviewColoursProc.requestId !== root.previewRequestId || getPreviewColoursProc.requestPath !== root.previewPath || !root.showPreview)
++                    return;
++                if (tag && tag !== getPreviewColoursProc.requestKey)
 +                    return;
                  Colours.load(text, true);
                  Colours.showPreview = true;
              }
+diff --git a/shell.qml b/shell.qml
+index 060fbef..4e470ac 100644
+--- a/shell.qml
++++ b/shell.qml
+@@ -2,8 +2,15 @@
+ //@ pragma DefaultEnv QS_NO_RELOAD_POPUP=1
+ //@ pragma DefaultEnv QS_DROP_EXPENSIVE_FONTS=1
+ //@ pragma DefaultEnv QSG_RENDER_LOOP=threaded
++//@ pragma DefaultEnv QSG_USE_SIMPLE_ANIMATION_DRIVER=1
+ //@ pragma DefaultEnv QT_QUICK_FLICKABLE_WHEEL_DECELERATION=10000
+ 
++// QSG_USE_SIMPLE_ANIMATION_DRIVER : les animations avancent au rythme de chaque écran plutôt
++// qu'à celui de l'écran « principal » de Qt (avec un 100 Hz et un 240 Hz, tout le shell
++// s'animait à 100 pas/s). En contrepartie, toutes les fenêtres du shell sont redessinées tant
++// qu'une animation tourne. Pour revenir en arrière : retirer la ligne, ou lancer le shell avec
++// la variable déjà définie.
++
+ import QtQuick
+ import Quickshell
+ import Caelestia.Config

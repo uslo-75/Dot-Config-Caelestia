@@ -9,6 +9,7 @@ interne change, on se replie sur les deux commandes publiques.
 Usage :
   caelestia-wallpaper-apply FOND [--mode auto|dark|light] [--variant auto|VARIANTE] [--no-smart]
   caelestia-wallpaper-apply --print FOND [...]              # schéma prévisualisé, sans rien modifier
+  caelestia-wallpaper-apply --print --tag ID FOND [...]     # idem, avec "tag": ID dans la sortie
   caelestia-wallpaper-apply --print --variants FOND [...]   # pastilles de toutes les variantes
 """
 
@@ -67,6 +68,13 @@ def preview_scheme(W, Scheme, base, source: Path, cache: Path, mode: str, varian
     return {"name": "dynamic", "flavour": base.flavour, "mode": mode, "variant": variant, "colours": colours}
 
 
+def emit(scheme: dict, args) -> None:
+    """Affiche un schéma ; l'étiquette permet à l'appelant de reconnaître une sortie complète."""
+    if args.tag and isinstance(scheme, dict):
+        scheme = {**scheme, "tag": args.tag}
+    print(json.dumps(scheme))
+
+
 def print_variants(W, Scheme, scheme, args) -> int:
     source, cache = cached_source(W, args.wallpaper)
     mode = args.mode if args.mode in MODES else None
@@ -94,7 +102,7 @@ def main() -> int:
     parser.add_argument("--no-smart", dest="smart", action="store_false")
     parser.add_argument("--print", action="store_true", help="affiche le schéma prévisualisé")
     parser.add_argument("--variants", action="store_true", help="avec --print : pastilles de toutes les variantes")
-    parser.add_argument("--tag", default="", help="renvoyé tel quel dans la sortie de --variants")
+    parser.add_argument("--tag", default="", help="renvoyé tel quel dans la sortie de --print")
     args = parser.parse_args()
     args.wallpaper = args.wallpaper.expanduser().resolve()
 
@@ -114,7 +122,7 @@ def main() -> int:
         if scheme.name != "dynamic" or (not mode and not variant):
             # Aucun réglage forcé : comportement exact de `caelestia wallpaper`.
             if args.print:
-                print(json.dumps(W.get_colours_for_wall(args.wallpaper, not args.smart)))
+                emit(W.get_colours_for_wall(args.wallpaper, not args.smart), args)
             else:
                 W.set_wallpaper(args.wallpaper, not args.smart)
             return 0
@@ -128,7 +136,7 @@ def main() -> int:
         variant = variant or scheme.variant
 
         if args.print:
-            print(json.dumps(preview_scheme(W, Scheme, scheme, source, cache, mode, variant)))
+            emit(preview_scheme(W, Scheme, scheme, source, cache, mode, variant), args)
             return 0
 
         # Valeurs posées sans sauvegarde : set_wallpaper (sans « smart ») ne génère et

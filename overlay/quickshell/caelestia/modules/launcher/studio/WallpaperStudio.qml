@@ -25,8 +25,15 @@ Item {
     property string lastPath: Wallpapers.actualCurrent
     property string lastQuery
 
-    readonly property StudioCard currentCard: view.currentItem as StudioCard
-    readonly property string currentPath: currentCard?.path ?? ""
+    // Sélection : elle change tout de suite (infos, aperçu, Entrée) et le carrousel la rejoint
+    // en glissant. PathView.currentIndex ne sert qu'à l'habillage de la carte au centre.
+    property int selectedIndex
+    readonly property string currentPath: entries[selectedIndex]?.path ?? ""
+    // Position du carrousel pendant un glissement, en cartes (non bornée).
+    property real scroll
+    property bool longMove
+    property real lastStep
+    property real wheelAcc
     readonly property bool currentIsActual: currentPath !== "" && currentPath === Wallpapers.actualCurrent
     readonly property var currentTheme: {
         WallStudio.themes; // dépendance
@@ -109,15 +116,89 @@ Item {
 
     function restoreIndex(): void {
         const values = scriptModel.values;
-        let idx;
-        if (query && query !== lastQuery)
-            idx = 0;
-        else
-            idx = values.findIndex(w => w.path === lastPath);
+        // Nouvelle recherche : premier résultat, sans oublier le fond sélectionné avant elle
+        // (on y revient en effaçant la recherche, sauf si on a navigué dans les résultats).
+        const searching = query !== "" && query !== lastQuery;
+        let idx = searching ? 0 : values.findIndex(w => w.path === lastPath);
         if (idx < 0 && !query)
             idx = values.findIndex(w => w.path === Wallpapers.actualCurrent);
         lastQuery = query;
-        view.currentIndex = Math.max(0, idx);
+        jumpTo(Math.max(0, idx), !searching);
+    }
+
+    function wrap(i: real, n: int): real {
+        return ((i % n) + n) % n;
+    }
+
+    // Carte affichée au centre, fractionnaire pendant un glissement.
+    function shownPos(): real {
+        const n = view.count;
+        return n > 0 ? wrap(n - view.offset, n) : 0;
+    }
+
+    // Place le carrousel sur une carte sans animation (ouverture, filtre, recherche).
+    function jumpTo(i: int, remember: bool): void {
+        scrollAnim.stop();
+        selectedIndex = i;
+        if (remember)
+            lastPath = entries[i]?.path ?? lastPath;
+        if (view.count === 0)
+            return;
+        view.currentIndex = i;
+        // Seulement si le carrousel n'y est pas déjà : juste après un changement de modèle,
+        // PathView n'a pas encore recréé ses cartes et une écriture sans effet de `offset`
+        // lui ferait recalculer sa carte courante à 0.
+        const offset = wrap(view.count - i, view.count);
+        if (Math.abs(view.offset - offset) > 0.0005)
+            view.offset = offset;
+    }
+
+    // Sélectionne une carte ; le carrousel y glisse par le plus court chemin depuis sa position
+    // du moment. Contrairement au déplacement intégré de PathView (qui repart de l'arrêt à
+    // chaque touche), une touche répétée ou maintenue garde son élan.
+    function select(i: int): void {
+        const n = view.count;
+        if (n === 0)
+            return;
+        i = wrap(i, n);
+        selectedIndex = i;
+        lastPath = entries[i]?.path ?? lastPath;
+
+        const from = shownPos();
+        let d = wrap(i - from, n);
+        if (d > n / 2)
+            d -= n;
+        scrollAnim.stop();
+        if (Math.abs(d) < 0.002)
+            return;
+        longMove = Math.abs(d) > 1.2;
+        scroll = from;
+        scrollAnim.from = from;
+        scrollAnim.to = from + d;
+        scrollAnim.duration = Math.round(Tokens.anim.durations.expressiveDefaultSpatial * Math.min(2, 0.8 + 0.2 * Math.abs(d)));
+        scrollAnim.start();
+    }
+
+    function moveBy(step: int): void {
+        if (view.count > 0)
+            select(selectedIndex + step);
+    }
+
+    // Touche maintenue : une douzaine de cartes par seconde au plus, pour que ça reste lisible.
+    function step(dir: int, repeat: bool): void {
+        const now = Date.now();
+        if (repeat && now - lastStep < 80)
+            return;
+        lastStep = now;
+        moveBy(dir);
+    }
+
+    // Après un glisser à la souris (géré par PathView), la sélection suit la carte au centre.
+    function syncSelection(): void {
+        if (view.count === 0 || scrollAnim.running)
+            return;
+        selectedIndex = view.currentIndex;
+        lastPath = entries[selectedIndex]?.path ?? lastPath;
     }
 
     function applyCurrent(keepOpen: bool): void {
@@ -137,18 +218,13 @@ Item {
         WallStudio.setFilter(keys[(i + step + keys.length) % keys.length]);
     }
 
-    function jump(step: int): void {
-        if (view.count > 0)
-            view.currentIndex = ((view.currentIndex + step) % view.count + view.count) % view.count;
-    }
-
     function randomCard(): void {
         if (view.count < 2)
             return;
-        let i = view.currentIndex;
-        while (i === view.currentIndex)
+        let i = selectedIndex;
+        while (i === selectedIndex)
             i = Math.floor(Math.random() * view.count);
-        view.currentIndex = i;
+        select(i);
     }
 
     function toggleOverlay(name: string): void {
@@ -196,17 +272,17 @@ Item {
         switch (event.key) {
         case Qt.Key_Left:
         case Qt.Key_Up:
-            view.decrementCurrentIndex();
+            step(-1, event.isAutoRepeat);
             return true;
         case Qt.Key_Right:
         case Qt.Key_Down:
-            view.incrementCurrentIndex();
+            step(1, event.isAutoRepeat);
             return true;
         case Qt.Key_PageUp:
-            jump(-5);
+            moveBy(-5);
             return true;
         case Qt.Key_PageDown:
-            jump(5);
+            moveBy(5);
             return true;
         case Qt.Key_Tab:
             cycleFilter(shift ? -1 : 1);
@@ -226,10 +302,31 @@ Item {
     implicitWidth: Math.min(availableWidth, Math.max(cardWidth * 3.4, 1440))
     implicitHeight: header.implicitHeight + Tokens.spacing.medium + carouselArea.height + Tokens.spacing.medium + info.implicitHeight
 
-    onCurrentPathChanged: {
-        if (currentPath)
-            lastPath = currentPath;
-        previewTimer.restart();
+    onCurrentPathChanged: previewTimer.restart()
+
+    onScrollChanged: {
+        if (scrollAnim.running && view.count > 0)
+            view.offset = wrap(view.count - scroll, view.count);
+    }
+
+    NumberAnimation {
+        id: scrollAnim
+
+        target: root
+        property: "scroll"
+        // Un cran : la courbe « spatiale » du shell (léger rebond). Plus loin : sans dépassement.
+        easing: root.longMove ? Tokens.anim.expressiveDefaultEffects : Tokens.anim.expressiveDefaultSpatial
+        onFinished: {
+            if (view.count > 0)
+                view.offset = root.wrap(view.count - root.selectedIndex, view.count);
+        }
+    }
+
+    onOverlayChanged: {
+        if (overlay === "transitions")
+            transitionLoader.active = true;
+        else if (overlay === "theme")
+            themeLoader.active = true;
     }
 
     onActiveChanged: {
@@ -240,7 +337,11 @@ Item {
         }
     }
 
-    Component.onDestruction: Wallpapers.stopPreview()
+    // Seulement si ce studio est celui qui prévisualise (un autre écran peut en avoir un ouvert).
+    Component.onDestruction: {
+        if (active)
+            Wallpapers.stopPreview();
+    }
 
     // L'aperçu sur le bureau (transition + vidéo + couleurs) attend que la navigation se pose.
     Timer {
@@ -406,6 +507,7 @@ Item {
             source: root.currentPath ? WallStudio.fileUrl(WallStudio.posterFor(root.currentPath)) : ""
             sourceSize: Qt.size(96, 54)
             asynchronous: true
+            retainWhileLoading: true // Pas de clignotement du halo pendant la navigation.
             fillMode: Image.PreserveAspectCrop
             visible: false
         }
@@ -455,14 +557,24 @@ Item {
             preferredHighlightBegin: 0.5
             preferredHighlightEnd: 0.5
             highlightRangeMode: PathView.StrictlyEnforceRange
-            highlightMoveDuration: Tokens.anim.durations.normal
+            highlightMoveDuration: 0 // Le glissement est piloté par root.select().
 
             Component.onCompleted: root.restoreIndex()
+            onDragStarted: scrollAnim.stop()
+            onMovementEnded: root.syncSelection()
+            onCurrentIndexChanged: {
+                if (moving)
+                    root.syncSelection();
+            }
 
             delegate: StudioCard {
                 cardWidth: root.cardWidth
                 cardHeight: root.cardHeight
-                onActivated: root.applyCurrent(false)
+                onPicked: root.select(index)
+                onActivated: {
+                    root.select(index);
+                    root.applyCurrent(false);
+                }
             }
 
             path: Path {
@@ -584,11 +696,19 @@ Item {
             }
 
             CustomMouseArea {
+                // Un cran de molette = une carte ; les petits pas d'un pavé tactile s'additionnent.
                 function onWheel(event: WheelEvent): void {
-                    if (event.angleDelta.y > 0 || event.angleDelta.x > 0)
-                        view.decrementCurrentIndex();
-                    else
-                        view.incrementCurrentIndex();
+                    const delta = event.angleDelta.y || event.angleDelta.x;
+                    if (delta === 0)
+                        return;
+                    if (delta * root.wheelAcc < 0)
+                        root.wheelAcc = 0;
+                    root.wheelAcc += delta;
+                    const steps = Math.trunc(root.wheelAcc / 120);
+                    if (steps !== 0) {
+                        root.wheelAcc -= steps * 120;
+                        root.moveBy(-steps);
+                    }
                 }
 
                 anchors.fill: parent
@@ -642,25 +762,45 @@ Item {
             }
         }
 
-        TransitionPicker {
+        // Les deux sélecteurs (une quarantaine de tuiles) ne sont créés qu'à leur première
+        // ouverture : le studio s'ouvre plus vite.
+        Loader {
+            id: transitionLoader
+
             anchors.fill: parent
             anchors.bottomMargin: -info.implicitHeight - Tokens.spacing.medium
             z: 200
-            shown: root.overlay === "transitions"
-            fromSource: WallStudio.fileUrl(Wallpapers.stillFor(Wallpapers.actualCurrent))
-            toSource: root.currentPath ? WallStudio.fileUrl(WallStudio.posterFor(root.currentPath)) : ""
-            onClosed: root.overlay = ""
+            active: false
+
+            sourceComponent: TransitionPicker {
+                property bool armed // Créé invisible, pour que la première ouverture soit animée aussi.
+
+                shown: armed && root.overlay === "transitions"
+                fromSource: WallStudio.fileUrl(Wallpapers.stillFor(Wallpapers.actualCurrent))
+                toSource: root.currentPath ? WallStudio.fileUrl(WallStudio.posterFor(root.currentPath)) : ""
+                onClosed: root.overlay = ""
+                Component.onCompleted: armed = true
+            }
         }
 
-        ThemePicker {
+        Loader {
+            id: themeLoader
+
             anchors.fill: parent
             anchors.bottomMargin: -info.implicitHeight - Tokens.spacing.medium
             z: 200
-            shown: root.overlay === "theme"
-            path: root.currentPath
-            theme: root.currentTheme
-            onPicked: (mode, variant) => root.setTheme(mode, variant)
-            onClosed: root.overlay = ""
+            active: false
+
+            sourceComponent: ThemePicker {
+                property bool armed
+
+                shown: armed && root.overlay === "theme"
+                path: root.currentPath
+                theme: root.currentTheme
+                onPicked: (mode, variant) => root.setTheme(mode, variant)
+                onClosed: root.overlay = ""
+                Component.onCompleted: armed = true
+            }
         }
     }
 
